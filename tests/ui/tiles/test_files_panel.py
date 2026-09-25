@@ -120,7 +120,15 @@ class TestInitialState:
 
     def test_empty_vault(self, panel: FilesPanel) -> None:
         assert panel._list.count() == 0
-        assert "Nothing here" in panel._status.text()
+        assert "No files here yet" in panel._status.text()
+
+    def test_empty_state_suggests_a_next_action(self, panel: FilesPanel) -> None:
+        """An empty state that only says "nothing here" leaves the user stuck.
+
+        Each panel's empty state names the action that fills it, which is this
+        package's acceptance criterion for empty states.
+        """
+        assert "Create a note or a task" in panel._status.text()
 
 
 class TestBrowsing:

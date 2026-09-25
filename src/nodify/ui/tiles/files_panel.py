@@ -295,7 +295,7 @@ class FilesPanel(QWidget):
 
         self._list.blockSignals(False)
         if not visible:
-            self._status.setText("Nothing here yet.")
+            self._status.setText("No files here yet. Create a note or a task to get started.")
 
     def _label_for(self, entry: FileEntry) -> str:
         age = describe_age(entry.modified_at, now=self._now())
