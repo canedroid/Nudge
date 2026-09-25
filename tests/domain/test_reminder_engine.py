@@ -13,7 +13,6 @@ import pytest
 
 from nodify.domain.clock import FixedClock, SystemClock
 from nodify.domain.documents import (
-    DocumentType,
     Timer,
     TimerKind,
     TimerStatus,
@@ -38,7 +37,6 @@ def make_timer(
 ) -> Timer:
     return Timer(
         id="tm1",
-        type=DocumentType.TIMER,
         title="Call Sam",
         kind=kind,
         status=status,

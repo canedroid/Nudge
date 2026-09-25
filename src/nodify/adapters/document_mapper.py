@@ -249,7 +249,6 @@ def from_frontmatter(
     if doc_type is DocumentType.TASK:
         return Task(
             id=doc_id,
-            type=doc_type,
             title=title,
             created_at=created,
             updated_at=updated,
@@ -268,7 +267,6 @@ def from_frontmatter(
 
     return Timer(
         id=doc_id,
-        type=doc_type,
         title=title,
         created_at=created,
         updated_at=updated,

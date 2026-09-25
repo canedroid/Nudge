@@ -162,7 +162,7 @@ class Note(Document):
         self.category = category
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, init=False)
 class Task(Document):
     """A task, stored inside a day file under ``todos/[YYYY-MM]/[DD-YYYY].md``."""
 
@@ -174,12 +174,49 @@ class Task(Document):
     completed_at: datetime | None = None
     completion_history: list[datetime] = field(default_factory=list)
 
+    def __init__(
+        self,
+        id: str,
+        title: str,
+        body: str = "",
+        notes: str = "",
+        created_at: datetime | None = None,
+        updated_at: datetime | None = None,
+        tags: list[str] | None = None,
+        extra: dict[str, Any] | None = None,
+        frontmatter_source: dict[str, Any] | None = None,
+        status: TaskStatus = TaskStatus.OPEN,
+        priority: str = "normal",
+        schedule: Schedule = Schedule.NOW,
+        due_at: datetime | None = None,
+        completed_at: datetime | None = None,
+        completion_history: list[datetime] | None = None,
+    ) -> None:
+        super().__init__(
+            id=id,
+            type=DocumentType.TASK,
+            title=title,
+            created_at=created_at,
+            updated_at=updated_at,
+            tags=tags or [],
+            body=body,
+            extra=extra or {},
+            frontmatter_source=frontmatter_source,
+        )
+        self.notes = notes
+        self.status = status
+        self.priority = priority
+        self.schedule = schedule
+        self.due_at = due_at
+        self.completed_at = completed_at
+        self.completion_history = completion_history or []
+
     @property
     def is_done(self) -> bool:
         return self.status is TaskStatus.DONE
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, init=False)
 class Timer(Document):
     """A timer or reminder, stored under ``timer/[YYYY-MM]/[DD-YYYY].md``."""
 
@@ -191,3 +228,42 @@ class Timer(Document):
     status: TimerStatus = TimerStatus.SCHEDULED
     notified_at: datetime | None = None
     completed_at: datetime | None = None
+
+    def __init__(
+        self,
+        id: str,
+        title: str,
+        body: str = "",
+        notes: str = "",
+        created_at: datetime | None = None,
+        updated_at: datetime | None = None,
+        tags: list[str] | None = None,
+        extra: dict[str, Any] | None = None,
+        frontmatter_source: dict[str, Any] | None = None,
+        kind: TimerKind = TimerKind.COUNTDOWN,
+        starts_at: datetime | None = None,
+        due_at: datetime | None = None,
+        duration_seconds: int | None = None,
+        status: TimerStatus = TimerStatus.SCHEDULED,
+        notified_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> None:
+        super().__init__(
+            id=id,
+            type=DocumentType.TIMER,
+            title=title,
+            created_at=created_at,
+            updated_at=updated_at,
+            tags=tags or [],
+            body=body,
+            extra=extra or {},
+            frontmatter_source=frontmatter_source,
+        )
+        self.notes = notes
+        self.kind = kind
+        self.starts_at = starts_at
+        self.due_at = due_at
+        self.duration_seconds = duration_seconds
+        self.status = status
+        self.notified_at = notified_at
+        self.completed_at = completed_at

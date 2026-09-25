@@ -16,7 +16,7 @@ import pytest
 
 from nodify.adapters.document_mapper import document_to_frontmatter, from_frontmatter
 from nodify.adapters.vault import Vault
-from nodify.domain.documents import DocumentType, Note, Schedule, Task, TaskStatus, Timer
+from nodify.domain.documents import Note, Schedule, Task, TaskStatus, Timer
 from nodify.domain.ports import DocumentFormatError
 
 HAND_WRITTEN_NOTE = """---
@@ -160,7 +160,6 @@ class TestTaskLifecycle:
 
         task = Task(
             id="t1",
-            type=DocumentType.TASK,
             title="Send the invoice",
             body="- [ ] Send the invoice\n",
             schedule=Schedule.SOON,
@@ -182,28 +181,27 @@ class TestTaskLifecycle:
         assert restored.completion_history == task.completion_history
         assert body == "- [x] Send the invoice\n"
 
-    def test_a_save_replaces_the_day_file(self, vault: Vault) -> None:
-        """A known seam, pinned so it cannot be forgotten.
+    def test_a_day_file_is_a_container_not_a_single_task(self, vault: Vault) -> None:
+        """The seam Package B pinned is now closed.
 
-        ``todos/2026-09/25-2026.md`` is meant to hold *many* tasks, but the
-        document model is one document per file, so writing replaces the file
-        wholesale. Phase D adds a day-file document that owns a list of tasks and
-        merges into the existing file; until then a second write would drop the
-        first task.
-
-        This test pins the current behaviour so the change in Phase D is a
-        deliberate, visible one.
+        A day file holds a ``tasks`` sequence, so a second task is added to the
+        same file rather than replacing the first. See ``adapters/day_file.py``.
         """
-        path = vault.resolver.resolve("todos", "2026-09", "25-2026.md")
-        save(vault, path, Task(id="t1", type=DocumentType.TASK, title="One"))
-        save(vault, path, Task(id="t2", type=DocumentType.TASK, title="Two"))
+        from nodify.adapters.day_file import DayFile
+        from nodify.domain.documents import Task
 
-        frontmatter, _ = load(vault, path)
-        assert from_frontmatter(frontmatter, "").id == "t2"
+        day = datetime(2026, 9, 25, tzinfo=UTC)
+        day_file = DayFile(day, vault.root)
+        day_file.add(DayFile.record_for(Task(id="t1", title="One")))
+        day_file.add(DayFile.record_for(Task(id="t2", title="Two")))
+        day_file.save(vault.documents)
+
+        reloaded = DayFile.load(vault.documents, vault.root, day)
+        assert [t.title for t in reloaded.tasks()] == ["One", "Two"]
 
     def test_day_file_appears_in_the_index(self, vault: Vault) -> None:
         path = vault.resolver.resolve("todos", "2026-09", "25-2026.md")
-        save(vault, path, Task(id="t1", type=DocumentType.TASK, title="One"))
+        save(vault, path, Task(id="t1", title="One"))
 
         entry = vault.index.refresh()[0]
         assert entry.area == "todos"
@@ -215,7 +213,6 @@ class TestTimerLifecycle:
         path = vault.resolver.resolve("timer", "2026-09", "25-2026.md")
         timer = Timer(
             id="tm1",
-            type=DocumentType.TIMER,
             title="Call Sam",
             due_at=datetime(2026, 9, 25, 15, 30, tzinfo=UTC),
             duration_seconds=1800,
@@ -232,7 +229,6 @@ class TestTimerLifecycle:
         path = vault.resolver.resolve("timer", "2026-09", "25-2026.md")
         timer = Timer(
             id="tm1",
-            type=DocumentType.TIMER,
             title="Call Sam",
             due_at=datetime(2026, 9, 25, 15, 30, tzinfo=UTC),
         )

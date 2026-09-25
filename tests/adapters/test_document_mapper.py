@@ -184,7 +184,6 @@ class TestTaskMapping:
     def test_full_task_round_trip(self) -> None:
         task = Task(
             id="t1",
-            type=DocumentType.TASK,
             title="Write report",
             body="Details\n",
             notes="internal",
@@ -207,7 +206,7 @@ class TestTaskMapping:
         assert restored.is_done
 
     def test_optional_task_fields_omitted_when_unset(self) -> None:
-        rendered = document_to_frontmatter(Task(id="t1", type=DocumentType.TASK, title="x"))
+        rendered = document_to_frontmatter(Task(id="t1", title="x"))
         assert "due_at" not in rendered
         assert "completed_at" not in rendered
         assert "notes" not in rendered
@@ -230,7 +229,6 @@ class TestTimerMapping:
     def test_full_timer_round_trip(self) -> None:
         timer = Timer(
             id="tm1",
-            type=DocumentType.TIMER,
             title="Call Sam",
             kind=TimerKind.COUNTDOWN,
             status=TimerStatus.SCHEDULED,
