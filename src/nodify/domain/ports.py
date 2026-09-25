@@ -32,6 +32,14 @@ class CollisionError(VaultError):
     """A write would overwrite an existing file."""
 
 
+class DocumentNotFoundError(VaultError):
+    """The requested document does not exist.
+
+    Distinct from a parse failure: a file that exists but cannot be read is a
+    different problem, and the UI must be able to say so.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class VaultArea:
     """One of the three fixed top-level vault areas."""
