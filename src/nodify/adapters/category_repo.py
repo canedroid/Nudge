@@ -38,6 +38,21 @@ class FileSystemCategoryRepository:
     def exists(self, name: str) -> bool:
         return self._path(name).is_dir()
 
+    def list(self) -> list[str]:
+        """Every category folder, empty or not.
+
+        This is the filesystem's own answer with no filtering. The Notes panel uses
+        ``NoteRepository.list_categories`` instead, which hides empty folders
+        because a user cannot select a category with no notes in it; the Files
+        panel needs the unfiltered list so a folder just created, or one emptied
+        by deleting its last note, is still visible and manageable.
+        """
+        self.ensure_note_root()
+        return sorted(
+            (child.name for child in self._notes_dir.iterdir() if child.is_dir()),
+            key=str.lower,
+        )
+
     def create(self, name: str) -> str:
         """Create a category folder and return its cleaned name.
 

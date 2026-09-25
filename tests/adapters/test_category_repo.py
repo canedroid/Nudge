@@ -67,6 +67,48 @@ class TestCreate:
         assert (vault.root / "notes" / "日本語").is_dir()
 
 
+class TestList:
+    def test_empty_vault(self, repo: FileSystemCategoryRepository) -> None:
+        assert repo.list() == []
+
+    def test_lists_every_folder(self, repo: FileSystemCategoryRepository) -> None:
+        repo.create("Work")
+        repo.create("Home")
+        assert repo.list() == ["Home", "Work"]
+
+    def test_includes_empty_folders(self, repo: FileSystemCategoryRepository) -> None:
+        """Unlike the notes view, an empty folder is still a real category here.
+
+        The Files panel has to be able to select a folder it just created, or one
+        left empty by deleting its last note, in order to rename or remove it.
+        """
+        repo.create("Empty")
+        assert repo.list() == ["Empty"]
+
+    def test_includes_a_folder_with_an_unreadable_note(
+        self, repo: FileSystemCategoryRepository, notes: MarkdownNoteRepository, vault: Vault
+    ) -> None:
+        (vault.root / "notes" / "Broken").mkdir(parents=True, exist_ok=True)
+        (vault.root / "notes" / "Broken" / "A.md").write_text("junk", encoding="utf-8")
+        assert repo.list() == ["Broken"]
+
+    def test_ignores_loose_files(self, repo: FileSystemCategoryRepository, vault: Vault) -> None:
+        (vault.root / "notes" / "A.md").write_text("x", encoding="utf-8")
+        assert repo.list() == []
+
+    def test_creates_the_notes_root_if_missing(
+        self, repo: FileSystemCategoryRepository, vault: Vault
+    ) -> None:
+        (vault.root / "notes").rmdir()
+        assert repo.list() == []
+        assert (vault.root / "notes").is_dir()
+
+    def test_sorted_case_insensitively(self, repo: FileSystemCategoryRepository) -> None:
+        repo.create("zeta")
+        repo.create("Alpha")
+        assert repo.list() == ["Alpha", "zeta"]
+
+
 class TestRename:
     def test_renames_the_folder(self, repo: FileSystemCategoryRepository, vault: Vault) -> None:
         repo.create("Work")

@@ -26,6 +26,7 @@ from nodify.domain.documents import Note
 from nodify.domain.ports import (
     CollisionError,
     DocumentNotFoundError,
+    PathOutsideVaultError,
     VaultError,
 )
 
@@ -134,6 +135,18 @@ class MarkdownNoteRepository:
         for _, path in self._scan_for(note_id):
             return path
         raise DocumentNotFoundError(f"no note with id {note_id!r}")
+
+    def note_id_at(self, relative_path: Path) -> str:
+        """The id of the note stored at a vault-relative path.
+
+        The Files view lists paths without parsing Markdown, so when the user asks
+        to move a note the id has to come from this side. It reads only the
+        requested file rather than scanning, so it is cheap.
+        """
+        path = self._root / relative_path
+        if not self._vault.resolver.contains(path):  # type: ignore[attr-defined]
+            raise PathOutsideVaultError("path escapes the vault")
+        return self._read_note(path).id
 
     def _scan_for(self, note_id: str) -> list[tuple[Note, Path]]:
         """Every readable (note, path) pair matching ``note_id``.

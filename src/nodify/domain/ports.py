@@ -102,6 +102,18 @@ class NoteRepository(Protocol):
 
     def get(self, note_id: str) -> Note: ...
 
+    def note_id_at(self, relative_path: Path) -> str:
+        """The id of the note at a vault-relative path.
+
+        The Files view lists paths without parsing Markdown, so a move requested
+        from there needs the id resolved here.
+        """
+        ...
+
+    def path_of(self, note_id: str) -> Path:
+        """The on-disk path of a note."""
+        ...
+
     def create(self, title: str, category: str, body: str = "") -> Note: ...
 
     def update(self, note_id: str, *, title: str | None, body: str | None) -> Note: ...
@@ -179,6 +191,10 @@ class TimerRepository(Protocol):
 
 class CategoryRepository(Protocol):
     """Category and folder operations for notes."""
+
+    def list(self) -> list[str]:
+        """Every category folder, empty ones included."""
+        ...
 
     def create(self, name: str) -> str: ...
 
