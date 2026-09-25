@@ -18,12 +18,11 @@ from pathlib import Path
 
 def main() -> int:
     """Build a throwaway vault, launch the dashboard, and report what came up."""
-    from nodify.adapters.vault import create
+    from nodify.adapters.vault import Vault, create
     from nodify.app.application import configure_surface_format
     from nodify.app.dashboard import Dashboard, Services
-    from nodify.adapters.vault import Vault
     from nodify.domain.clock import FixedClock
-    from nodify.services.hotkey import RecordingRegistrar, HotkeyService
+    from nodify.services.hotkey import HotkeyService, RecordingRegistrar
     from nodify.services.settings import AppSettings
 
     configure_surface_format()

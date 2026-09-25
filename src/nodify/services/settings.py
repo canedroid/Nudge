@@ -304,18 +304,22 @@ def load_or_create(
     """Load settings, writing the defaults out on a first run.
 
     Writing them out means the user has a real file to edit, which matters for the
-    hand-editing workflow the config layer is built on.
+    hand-editing workflow the config layer is built on. The defaults are written
+    whether or not they were passed in, because "there is no file yet" is exactly
+    when the user most needs one to look at.
     """
     outcome = load_settings(directory)
-    if outcome.used_defaults and defaults is not None:
-        # Not being able to write the defaults out is not fatal: the defaults
-        # still apply for this run.
-        with contextlib.suppress(SettingsError):
-            save_settings(defaults, directory)
-        return SettingsOutcome(
-            settings=defaults, recovered_from=outcome.recovered_from, used_defaults=True
-        )
-    return outcome
+    if not outcome.used_defaults:
+        return outcome
+
+    chosen = defaults if defaults is not None else outcome.settings
+    # Not being able to write them out is not fatal: the defaults still apply for
+    # this run, and the file can be created by hand.
+    with contextlib.suppress(SettingsError):
+        save_settings(chosen, directory)
+    return SettingsOutcome(
+        settings=chosen, recovered_from=outcome.recovered_from, used_defaults=True
+    )
 
 
 __all__ = [

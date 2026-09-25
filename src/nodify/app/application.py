@@ -139,9 +139,20 @@ class Application:
 
 
 def build_application(argv: Sequence[str] | None = None) -> tuple[QApplication, Overlay]:
-    """Create the application and its overlay, wired to each other."""
+    """Create the application and its overlay, wired to each other.
+
+    An existing ``QApplication`` is reused rather than replaced. Qt permits exactly
+    one per process, and constructing a second one is a hard access violation rather
+    than an exception, so a caller that already has an instance must not be given a
+    crash.
+    """
     configure_surface_format()
-    app = QApplication(list(argv) if argv is not None else sys.argv)
+    existing = QApplication.instance()
+    app = (
+        existing
+        if isinstance(existing, QApplication)
+        else QApplication(list(argv) if argv is not None else sys.argv)
+    )
     app.setApplicationName(APPLICATION)
     app.setOrganizationName(ORGANISATION)
     # The overlay hides rather than closes, so the process must outlive the last

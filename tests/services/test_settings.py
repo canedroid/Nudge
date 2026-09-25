@@ -233,6 +233,19 @@ class TestLoadOrCreate:
         assert outcome.settings == defaults
         assert settings_path(config).is_file()
 
+    def test_writes_the_defaults_even_without_them_being_passed(self, config: Path) -> None:
+        """A first run must leave a file behind.
+
+        The application calls this with no explicit defaults on startup, so the
+        guard that skipped writing in that case meant the very first launch of the
+        packaged application produced no settings file at all. "There is no file
+        yet" is exactly when the user most needs one to look at.
+        """
+        outcome = load_or_create(config)
+        assert settings_path(config).is_file()
+        assert outcome.used_defaults
+        assert outcome.settings == AppSettings()
+
     def test_does_not_overwrite_an_existing_file(self, config: Path) -> None:
         save_settings(AppSettings(hotkey="Ctrl+Shift+K"), config)
         outcome = load_or_create(config, AppSettings(hotkey="Ctrl+Shift+J"))
