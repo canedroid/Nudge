@@ -8,7 +8,24 @@ version = "0.1.0"
 description = "A local-first desktop productivity command center for Windows"
 readme = "README.md"
 requires-python = ">=3.13"
+# UNRESOLVED LICENCE CONFLICT. See README.md "Licence".
+#
+# PyQt6 is dual licensed under GPL-3.0-only and the Riverbank Commercial License,
+# and is NOT available under the LGPL. Riverbank states that using the GPL version
+# requires this project's own licence to be GPL-compatible. The MIT declared here
+# is therefore not compatible with the dependencies as installed, and a build of
+# this project must not be distributed until this is resolved.
+#
+# The three resolutions: relicense under GPL-3.0-only; buy a Riverbank commercial
+# licence; or move to PySide6, which is LGPL.
 license = { text = "MIT" }
+classifiers = [
+    # Intentionally NOT asserting a licence classifier, because the licence is
+    # unresolved. Adding "License :: OSI Approved :: MIT License" here would be a
+    # claim the dependencies do not support.
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: Microsoft :: Windows",
+]
 
 dependencies = [
     "PyQt6>=6.11",
