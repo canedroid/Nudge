@@ -11,7 +11,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from nodify.domain.documents import Note, Task, Timer
 
@@ -261,9 +261,15 @@ class GlobalShortcutService(Protocol):
     def unregister(self) -> None: ...
 
 
+@runtime_checkable
 class PhoneNotificationSource(Protocol):
-    """A future-facing input contract with a placeholder implementation."""
+    """A future-facing input contract with a placeholder implementation.
 
-    def poll(self) -> Iterator[dict[str, object]]: ...
+    Deliberately says nothing about the payload type: the bridge validates
+    whatever a source yields, so a future transport can return a raw mapping
+    without the store having to know about it.
+    """
+
+    def poll(self) -> Iterator[object]: ...
 
     def is_enabled(self) -> bool: ...
