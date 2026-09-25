@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtCore import QRect, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QCloseEvent,
     QColor,
@@ -43,6 +43,12 @@ GUTTER_PASS_COLOR = QColor(0, 0, 0, GUTTER_ALPHA_PASS_THROUGH)
 
 class Overlay(QWidget):
     """Frameless translucent always-on-top fullscreen overlay."""
+
+    #: Emitted with a message worth showing the user, such as a hotkey that could
+    #: not be registered. Collected by the application layer rather than painted
+    #: here, because the overlay has no chrome to put a message in without
+    #: disturbing the layout the user arranged.
+    status_message = pyqtSignal(str)
 
     def __init__(self, on_quit: Callable[[], None] | None = None) -> None:
         super().__init__(

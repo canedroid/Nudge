@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from nodify.domain.documents import Note, Task, Timer
+from nodify.domain.documents import Note, Schedule, Task, Timer, TimerKind
 
 
 class VaultError(Exception):
@@ -144,7 +144,17 @@ class TaskRepository(Protocol):
         """Every task in the vault."""
         ...
 
-    def create(self, day: datetime, title: str, **kwargs: object) -> Task: ...
+    def create(
+        self,
+        day: datetime,
+        title: str,
+        *,
+        notes: str = "",
+        schedule: Schedule = Schedule.NOW,
+        due_at: datetime | None = None,
+        priority: str = "normal",
+        tags: list[str] | None = None,
+    ) -> Task: ...
     def get(self, task_id: str) -> Task: ...
 
     def update(self, task_id: str, **changes: object) -> Task: ...
@@ -165,7 +175,17 @@ class TimerRepository(Protocol):
 
     def list_for_day(self, day: datetime) -> list[Timer]: ...
 
-    def create(self, day: datetime, title: str, **kwargs: object) -> Timer: ...
+    def create(
+        self,
+        day: datetime,
+        title: str,
+        *,
+        kind: TimerKind = TimerKind.COUNTDOWN,
+        notes: str = "",
+        due_at: datetime | None = None,
+        duration_seconds: int | None = None,
+        tags: list[str] | None = None,
+    ) -> Timer: ...
 
     def get(self, timer_id: str) -> Timer: ...
 
@@ -174,6 +194,7 @@ class TimerRepository(Protocol):
     def complete(self, timer_id: str, at: datetime) -> Timer: ...
 
     def dismiss(self, timer_id: str) -> Timer: ...
+
     def mark_notified(self, timer_id: str, at: datetime) -> Timer: ...
 
     def snooze(self, timer_id: str, minutes: int, *, at: datetime) -> Timer:
