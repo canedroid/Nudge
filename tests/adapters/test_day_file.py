@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from nodify.adapters.day_file import (
-    DayFile,
+    TaskDayFile,
     day_file_name,
     day_folder,
     normalise_day,
@@ -77,75 +77,75 @@ class TestNaming:
 
 class TestPath:
     def test_relative_path(self, vault: Vault) -> None:
-        day_file = DayFile(DAY, vault.root)
+        day_file = TaskDayFile(DAY, vault.root)
         assert day_file.relative_path == Path("todos/2026-09/25-2026.md")
 
     def test_does_not_exist_initially(self, vault: Vault) -> None:
-        assert not DayFile(DAY, vault.root).exists
+        assert not TaskDayFile(DAY, vault.root).exists
 
 
 class TestRoundTrip:
     def test_write_then_read(self, vault: Vault) -> None:
-        day_file = DayFile(DAY, vault.root)
-        day_file.add(DayFile.record_for(make_task(1)))
+        day_file = TaskDayFile(DAY, vault.root)
+        day_file.add(TaskDayFile.record_for(make_task(1)))
         day_file.save(vault.documents)
 
-        reloaded = DayFile.load(vault.documents, vault.root, DAY)
+        reloaded = TaskDayFile.load(vault.documents, vault.root, DAY)
         assert len(reloaded) == 1
         assert reloaded.tasks()[0].title == "Task 1"
 
     def test_creates_missing_directories(self, vault: Vault) -> None:
-        day_file = DayFile(DAY, vault.root)
-        day_file.add(DayFile.record_for(make_task(1)))
+        day_file = TaskDayFile(DAY, vault.root)
+        day_file.add(TaskDayFile.record_for(make_task(1)))
         day_file.save(vault.documents)
         assert (vault.root / "todos" / "2026-09" / "25-2026.md").is_file()
 
     def test_many_tasks_share_one_file(self, vault: Vault) -> None:
-        day_file = DayFile(DAY, vault.root)
+        day_file = TaskDayFile(DAY, vault.root)
         for index in range(5):
-            day_file.add(DayFile.record_for(make_task(index)))
+            day_file.add(TaskDayFile.record_for(make_task(index)))
         day_file.save(vault.documents)
 
-        reloaded = DayFile.load(vault.documents, vault.root, DAY)
+        reloaded = TaskDayFile.load(vault.documents, vault.root, DAY)
         assert len(reloaded) == 5
         assert [t.title for t in reloaded.tasks()] == [f"Task {i}" for i in range(5)]
 
     def test_order_is_preserved(self, vault: Vault) -> None:
-        day_file = DayFile(DAY, vault.root)
+        day_file = TaskDayFile(DAY, vault.root)
         for index, title in enumerate(("First", "Second", "Third")):
-            day_file.add(DayFile.record_for(make_task(index, title=title)))
+            day_file.add(TaskDayFile.record_for(make_task(index, title=title)))
         day_file.save(vault.documents)
 
-        reloaded = DayFile.load(vault.documents, vault.root, DAY)
+        reloaded = TaskDayFile.load(vault.documents, vault.root, DAY)
         assert [t.title for t in reloaded.tasks()] == ["First", "Second", "Third"]
 
     def test_missing_file_loads_empty(self, vault: Vault) -> None:
-        assert len(DayFile.load(vault.documents, vault.root, DAY)) == 0
+        assert len(TaskDayFile.load(vault.documents, vault.root, DAY)) == 0
 
     def test_remove(self, vault: Vault) -> None:
-        day_file = DayFile(DAY, vault.root)
-        day_file.add(DayFile.record_for(make_task(1)))
-        day_file.add(DayFile.record_for(make_task(2)))
+        day_file = TaskDayFile(DAY, vault.root)
+        day_file.add(TaskDayFile.record_for(make_task(1)))
+        day_file.add(TaskDayFile.record_for(make_task(2)))
         day_file.remove("task_1")
         day_file.save(vault.documents)
 
-        reloaded = DayFile.load(vault.documents, vault.root, DAY)
+        reloaded = TaskDayFile.load(vault.documents, vault.root, DAY)
         assert [t.id for t in reloaded.tasks()] == ["task_2"]
 
     def test_put_keeps_position(self, vault: Vault) -> None:
         """Editing a task must not move it to the bottom of the day."""
-        day_file = DayFile(DAY, vault.root)
+        day_file = TaskDayFile(DAY, vault.root)
         for index in range(3):
-            day_file.add(DayFile.record_for(make_task(index)))
+            day_file.add(TaskDayFile.record_for(make_task(index)))
 
-        day_file.put(DayFile.record_for(make_task(0, title="Edited first")))
+        day_file.put(TaskDayFile.record_for(make_task(0, title="Edited first")))
         assert [t.id for t in day_file.tasks()] == ["task_0", "task_1", "task_2"]
         assert day_file.tasks()[0].title == "Edited first"
 
     def test_put_appends_an_unknown_id(self, vault: Vault) -> None:
-        day_file = DayFile(DAY, vault.root)
-        day_file.add(DayFile.record_for(make_task(1)))
-        day_file.put(DayFile.record_for(make_task(2)))
+        day_file = TaskDayFile(DAY, vault.root)
+        day_file.add(TaskDayFile.record_for(make_task(1)))
+        day_file.put(TaskDayFile.record_for(make_task(2)))
         assert [t.id for t in day_file.tasks()] == ["task_1", "task_2"]
 
 
@@ -162,7 +162,7 @@ class TestMalformedRecords:
             "---\n\nbody\n",
             encoding="utf-8",
         )
-        reloaded = DayFile.load(vault.documents, vault.root, DAY)
+        reloaded = TaskDayFile.load(vault.documents, vault.root, DAY)
         assert [t.title for t in reloaded.tasks()] == ["Good", "Also good"]
 
     def test_a_non_list_tasks_key_is_tolerated(self, vault: Vault) -> None:
@@ -172,20 +172,20 @@ class TestMalformedRecords:
             "---\nid: day_20260925\ntype: day\ntasks: not a list\n---\n\nbody\n",
             encoding="utf-8",
         )
-        assert len(DayFile.load(vault.documents, vault.root, DAY)) == 0
+        assert len(TaskDayFile.load(vault.documents, vault.root, DAY)) == 0
 
     def test_a_file_with_no_tasks_key(self, vault: Vault) -> None:
         path = vault.root / "todos" / "2026-09" / "25-2026.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("---\nid: day_20260925\ntype: day\n---\n\nbody\n", encoding="utf-8")
-        assert len(DayFile.load(vault.documents, vault.root, DAY)) == 0
+        assert len(TaskDayFile.load(vault.documents, vault.root, DAY)) == 0
 
 
 class TestChecklistBody:
     def test_open_and_done_markers(self, vault: Vault) -> None:
-        day_file = DayFile(DAY, vault.root)
-        day_file.add(DayFile.record_for(make_task(1, title="Open one")))
-        day_file.add(DayFile.record_for(make_task(2, title="Done one", status=TaskStatus.DONE)))
+        day_file = TaskDayFile(DAY, vault.root)
+        day_file.add(TaskDayFile.record_for(make_task(1, title="Open one")))
+        day_file.add(TaskDayFile.record_for(make_task(2, title="Done one", status=TaskStatus.DONE)))
         day_file.save(vault.documents)
 
         body = day_file.body()
@@ -193,14 +193,14 @@ class TestChecklistBody:
         assert "- [x] Done one" in body
 
     def test_includes_notes(self, vault: Vault) -> None:
-        day_file = DayFile(DAY, vault.root)
-        day_file.add(DayFile.record_for(make_task(1, notes="ask about pricing")))
+        day_file = TaskDayFile(DAY, vault.root)
+        day_file.add(TaskDayFile.record_for(make_task(1, notes="ask about pricing")))
         day_file.save(vault.documents)
         assert "ask about pricing" in day_file.body()
 
     def test_body_is_valid_markdown_for_obsidian(self, vault: Vault) -> None:
-        day_file = DayFile(DAY, vault.root)
-        day_file.add(DayFile.record_for(make_task(1)))
+        day_file = TaskDayFile(DAY, vault.root)
+        day_file.add(TaskDayFile.record_for(make_task(1)))
         day_file.save(vault.documents)
         body = (vault.root / "todos" / "2026-09" / "25-2026.md").read_text(encoding="utf-8")
         assert body.startswith("---\n")
@@ -220,12 +220,12 @@ class TestForeignKeys:
             encoding="utf-8",
         )
 
-        day_file = DayFile.load(vault.documents, vault.root, DAY)
+        day_file = TaskDayFile.load(vault.documents, vault.root, DAY)
         tasks = day_file.tasks()
         tasks[0].title = "Task 1 renamed"
 
         day_file.remove("task_1")
-        day_file.add(DayFile.record_for(tasks[0]))
+        day_file.add(TaskDayFile.record_for(tasks[0]))
         day_file.save(vault.documents)
 
         written = path.read_text(encoding="utf-8")
@@ -249,10 +249,10 @@ class TestForeignKeys:
         )
         original = path.read_text(encoding="utf-8")
 
-        day_file = DayFile.load(vault.documents, vault.root, DAY)
+        day_file = TaskDayFile.load(vault.documents, vault.root, DAY)
         tasks = day_file.tasks()
         tasks[0].title = "Changed"
-        day_file.put(DayFile.record_for(tasks[0]))
+        day_file.put(TaskDayFile.record_for(tasks[0]))
         day_file.save(vault.documents)
 
         written = path.read_text(encoding="utf-8")
@@ -262,31 +262,31 @@ class TestForeignKeys:
         # rewritten: it still has exactly the two keys it started with. Comparing
         # the rendered keys is the direct check, because the YAML emitter is free
         # to reindent a sequence without changing the data.
-        reloaded = DayFile.load(vault.documents, vault.root, DAY)
+        reloaded = TaskDayFile.load(vault.documents, vault.root, DAY)
         assert [t.id for t in reloaded.tasks()] == ["task_1", "task_2"]
         assert set(reloaded.record("task_2")) == {"id", "title"}
         assert "title: Task 2" in written
         assert "id: task_2" in original
 
     def test_a_no_op_save_is_byte_identical(self, vault: Vault) -> None:
-        day_file = DayFile(DAY, vault.root)
+        day_file = TaskDayFile(DAY, vault.root)
         for index in range(3):
-            day_file.add(DayFile.record_for(make_task(index)))
+            day_file.add(TaskDayFile.record_for(make_task(index)))
         day_file.save(vault.documents)
         path = vault.root / "todos" / "2026-09" / "25-2026.md"
         first = path.read_text(encoding="utf-8")
 
-        reloaded = DayFile.load(vault.documents, vault.root, DAY)
+        reloaded = TaskDayFile.load(vault.documents, vault.root, DAY)
         reloaded.save(vault.documents)
         assert path.read_text(encoding="utf-8") == first
 
 
 class TestRecordShape:
     def test_a_record_declares_its_type(self, vault: Vault) -> None:
-        record = DayFile.record_for(make_task(1))
+        record = TaskDayFile.record_for(make_task(1))
         assert record["type"] == str(DocumentType.TASK)
 
     def test_a_record_carries_the_contract_fields(self, vault: Vault) -> None:
-        record = DayFile.record_for(make_task(1))
+        record = TaskDayFile.record_for(make_task(1))
         for key in ("id", "title", "status", "schedule", "priority", "created_at"):
             assert key in record

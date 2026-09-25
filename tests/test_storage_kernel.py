@@ -187,16 +187,16 @@ class TestTaskLifecycle:
         A day file holds a ``tasks`` sequence, so a second task is added to the
         same file rather than replacing the first. See ``adapters/day_file.py``.
         """
-        from nodify.adapters.day_file import DayFile
+        from nodify.adapters.day_file import TaskDayFile
         from nodify.domain.documents import Task
 
         day = datetime(2026, 9, 25, tzinfo=UTC)
-        day_file = DayFile(day, vault.root)
-        day_file.add(DayFile.record_for(Task(id="t1", title="One")))
-        day_file.add(DayFile.record_for(Task(id="t2", title="Two")))
+        day_file = TaskDayFile(day, vault.root)
+        day_file.add(TaskDayFile.record_for(Task(id="t1", title="One")))
+        day_file.add(TaskDayFile.record_for(Task(id="t2", title="Two")))
         day_file.save(vault.documents)
 
-        reloaded = DayFile.load(vault.documents, vault.root, day)
+        reloaded = TaskDayFile.load(vault.documents, vault.root, day)
         assert [t.title for t in reloaded.tasks()] == ["One", "Two"]
 
     def test_day_file_appears_in_the_index(self, vault: Vault) -> None:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from nodify.adapters.day_file import DayFile
+from nodify.adapters.day_file import TaskDayFile
 from nodify.adapters.task_repo import MarkdownTaskRepository
 from nodify.adapters.vault import Vault
 from nodify.domain.clock import FixedClock
@@ -298,7 +298,7 @@ class TestEditingOneTaskLeavesOthersIntact:
 
         repo.update("task_managed", title="Managed edited")
 
-        day_file = DayFile.load(vault.documents, vault.root, DAY)
+        day_file = TaskDayFile.load(vault.documents, vault.root, DAY)
         untouched = day_file.record_by_title("Handwritten")
         assert untouched is not None
         assert set(untouched) == {"id", "title"}

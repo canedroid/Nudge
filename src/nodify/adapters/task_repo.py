@@ -1,8 +1,8 @@
 """Task persistence.
 
 A task lives inside its day's file, so every mutation is a read, modify, write of
-one file. That is why :class:`DayFile` detaches its records: editing one task must
-not rewrite the others.
+one file. That is why :class:`TaskDayFile` detaches its records: editing one task
+must not rewrite the others.
 
 Scheduling is a coarse window, not a promise. ``now``, ``soon`` and ``week`` pick a
 representative due time, but an explicitly chosen ``due_at`` always wins, because
@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
-from nodify.adapters.day_file import DayFile, normalise_day
+from nodify.adapters.day_file import TaskDayFile, normalise_day
 from nodify.domain.clock import Clock, SystemClock
 from nodify.domain.documents import (
     Schedule,
@@ -91,8 +91,8 @@ class MarkdownTaskRepository:
     def _documents(self) -> MarkdownDocumentStore:
         return self._vault.documents
 
-    def _load(self, day: datetime) -> DayFile:
-        return DayFile.load(self._documents, self._root, day)
+    def _load(self, day: datetime) -> TaskDayFile:
+        return TaskDayFile.load(self._documents, self._root, day)
 
     # ------------------------------------------------------------------ read
 
@@ -106,12 +106,12 @@ class MarkdownTaskRepository:
                     return task
         raise DocumentNotFoundError(f"no task with id {task_id!r}")
 
-    def _day_files(self) -> list[DayFile]:
+    def _day_files(self) -> list[TaskDayFile]:
         """Every day file in the vault, in chronological order."""
         todos_root = self._root / "todos"
         if not todos_root.is_dir():
             return []
-        loaded: list[DayFile] = []
+        loaded: list[TaskDayFile] = []
         for month_dir in sorted(todos_root.iterdir(), key=lambda p: p.name):
             if not month_dir.is_dir():
                 continue
@@ -120,7 +120,7 @@ class MarkdownTaskRepository:
                 if day is None:
                     continue
                 try:
-                    loaded.append(DayFile.load(self._documents, self._root, day))
+                    loaded.append(TaskDayFile.load(self._documents, self._root, day))
                 except VaultError:
                     # A corrupt day file must not hide every other day.
                     continue
@@ -228,7 +228,7 @@ class MarkdownTaskRepository:
             schedule=schedule,
             due_at=resolve_due_at(schedule, now=created, explicit=explicit),
         )
-        day_file.add(DayFile.record_for(task))
+        day_file.add(TaskDayFile.record_for(task))
         day_file.save(self._documents)
         return task
 
@@ -250,7 +250,7 @@ class MarkdownTaskRepository:
 
             # ``put`` rather than remove-then-add, so an edited task keeps its
             # position in the day rather than jumping to the bottom.
-            day_file.put(DayFile.record_for(task))
+            day_file.put(TaskDayFile.record_for(task))
             day_file.save(self._documents)
             return task
 
@@ -327,7 +327,7 @@ class MarkdownTaskRepository:
 
             target = self._load(day)
             if target.relative_path != day_file.relative_path:
-                target.add(DayFile.record_for(task))
+                target.add(TaskDayFile.record_for(task))
                 target.save(self._documents)
                 day_file.remove(task_id)
                 day_file.save(self._documents)
