@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nodify"
+version = "0.1.0"
+description = "A local-first desktop productivity command center for Windows"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+
+dependencies = [
+    "PyQt6>=6.11",
+    "ruamel.yaml>=0.19",
+    "watchdog>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.16",
+    "mypy>=2.3",
+    "pytest>=9.1",
+    "pyinstaller>=6.22",
+]
+
+[project.scripts]
+nodify = "nodify.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+extend-exclude = ["packages", "src/nodify/ui/kit"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "RET",  # return
+    "PTH",  # pathlib
+    "TID",  # tidy imports
+]
+ignore = [
+    "E501",    # line length is handled by the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/nodify/ui/kit/*" = ["ALL"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["nodify"]
+
+[tool.mypy]
+python_version = "3.13"
+mypy_path = "src"
+namespace_packages = true
+explicit_package_bases = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+strict_equality = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+exclude = "(?x)(^src/nodify/ui/kit/|^build/|^dist/)"
+
+[[tool.mypy.overrides]]
+module = ["watchdog.*", "PyQt6.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "9.1"
+testpaths = ["tests"]
+addopts = "-q --strict-markers --strict-config"
+filterwarnings = ["error"]

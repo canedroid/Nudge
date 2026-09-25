@@ -1,0 +1,41 @@
+# --- Local planning documents (per owner decision) ---
+PLAN.MD
+PROGRESS.MD
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.manifest
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Tooling caches ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- User data: the vault is never committed ---
+vault/
+*.localvault/
+
+# --- Build / packaging ---
+*.spec.bak
+build/
+dist/
+
+# --- OS / editor noise ---
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,6 @@
+# Normalise line endings on checkout; keep them as-authored in the repository.
+* text=auto eol=lf
+
+# Windows-native files must stay CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
