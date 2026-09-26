@@ -342,3 +342,58 @@ class TestVaultChange:
     def test_describes_itself(self, tmp_path: Path) -> None:
         change = VaultChange(ChangeKind.CREATED, tmp_path / "a.md")
         assert str(change) == "created a.md"
+
+
+class TestQtTrayIcon:
+    """The real tray icon, which the application had no implementation of.
+
+    ``TrayService`` was a routing abstraction with an injectable icon, and nothing
+    ever supplied one, so the running application had a tray service and no tray.
+    """
+
+    def test_the_menu_offers_the_three_actions(self, qapp: object) -> None:
+        from nodify.services.platform import QtTrayIcon
+
+        chosen: list[object] = []
+        icon = QtTrayIcon(chosen.append)
+
+        assert len(icon.menu_actions()) == 3
+        assert chosen == []
+
+    def test_activating_an_entry_reports_that_entry(self, qapp: object) -> None:
+        """Every entry must report itself.
+
+        A callback that closed over the loop variable late would make all three
+        entries fire the last action, so each is triggered on its own.
+        """
+        from nodify.services.platform import QtTrayIcon, TrayAction
+
+        chosen: list[object] = []
+        icon = QtTrayIcon(chosen.append)
+
+        for entry in icon.menu_entries():
+            entry.trigger()
+
+        assert chosen == [TrayAction.TOGGLE, TrayAction.SETTINGS, TrayAction.QUIT]
+
+    def test_it_satisfies_the_notification_protocol(self, qapp: object) -> None:
+        """The notifier calls showMessage; a tray lacking it would break reminders."""
+        from nodify.services.platform import QtTrayIcon
+
+        icon = QtTrayIcon(lambda _a: None)
+        icon.showMessage("Timer", "Tea is ready", None, 1000)
+        icon.hide()
+
+    def test_show_and_hide(self, qapp: object) -> None:
+        from nodify.services.platform import QtTrayIcon
+
+        icon = QtTrayIcon(lambda _a: None)
+        icon.show()
+        icon.hide()
+        assert not icon.is_visible()
+
+    def test_availability_can_be_asked_without_a_desktop(self) -> None:
+        """A missing tray must be answerable rather than an exception."""
+        from nodify.services.platform import tray_is_available
+
+        assert isinstance(tray_is_available(), bool)

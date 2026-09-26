@@ -17,9 +17,12 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from nodify.services.notifications import TrayIconLike
+
+if TYPE_CHECKING:
+    from PyQt6.QtGui import QIcon
 
 #: How long to wait before coalescing bursts of file events.
 WATCH_DEBOUNCE_SECONDS = 0.4
@@ -331,15 +334,123 @@ def iter_vault_areas(root: Path) -> Iterator[Path]:
             yield path
 
 
+class QtTrayIcon:
+    """A real system tray icon with a menu, for the running application.
+
+    :class:`TrayService` above is a routing abstraction with no Qt in it, which is
+    what made it testable. This is the platform half: it owns a
+    ``QSystemTrayIcon`` and a menu, paints an icon at runtime rather than shipping
+    a binary asset, and reports menu choices back through one callback so the
+    service remains the only place an action is dispatched from.
+    """
+
+    def __init__(self, on_action: Callable[[TrayAction], None], *, tooltip: str = "Nodify") -> None:
+        from PyQt6.QtGui import QAction
+        from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
+
+        self._on_action = on_action
+        self._menu = QMenu()
+        self._system = QSystemTrayIcon(_nodify_icon())
+        self._system.setToolTip(tooltip)
+        self._system.setContextMenu(self._menu)
+
+        labels = (
+            (TrayAction.TOGGLE, "Show / hide"),
+            (TrayAction.SETTINGS, "Settings"),
+            (TrayAction.QUIT, "Quit"),
+        )
+        for action, label in labels:
+            entry = QAction(label, self._menu)
+            # The default argument binds the action now; without it every entry
+            # would fire whichever one Qt happened to be holding.
+            entry.triggered.connect(lambda _checked=False, a=action: self._on_action(a))
+            self._menu.addAction(entry)
+
+        self._system.activated.connect(self._on_activated)
+
+    def _on_activated(self, reason: object) -> None:
+        """A click on the icon itself toggles, matching what users expect."""
+        from PyQt6.QtWidgets import QSystemTrayIcon
+
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._on_action(TrayAction.TOGGLE)
+
+    def showMessage(  # noqa: N802 - matching the Qt and protocol spelling
+        self, title: str, body: str, icon: object = None, msecs: int = 5000
+    ) -> None:
+        """Show a balloon notification, satisfying :class:`TrayIconLike`."""
+        from PyQt6.QtWidgets import QSystemTrayIcon
+
+        self._system.showMessage(title, body, QSystemTrayIcon.MessageIcon.Information, int(msecs))
+
+    def show(self) -> None:
+        self._system.show()
+
+    def hide(self) -> None:
+        self._system.hide()
+
+    def is_visible(self) -> bool:
+        return bool(self._system.isVisible())
+
+    def menu_entries(self) -> tuple[object, ...]:
+        """The menu's actions, so a caller can inspect or trigger them."""
+        return tuple(self._menu.actions())
+
+    def menu_actions(self) -> tuple[str, ...]:
+        """The menu entry labels, for a caller that wants to describe the menu."""
+        return tuple(action.text() for action in self._menu.actions())
+
+
+def _nodify_icon() -> QIcon:
+    """Paint the tray icon at runtime.
+
+    Drawn rather than shipped so there is no binary asset to keep in sync with the
+    palette or to lose in packaging.
+    """
+    from PyQt6.QtCore import QRectF, Qt
+    from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
+
+    from nodify.ui.kit import colors
+
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(colors.PURPLE))
+    painter.drawRoundedRect(QRectF(4, 4, 56, 56), 14, 14)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def tray_is_available() -> bool:
+    """Whether this desktop has a system tray at all.
+
+    Windows can run without one, and a session on a server or in a container may
+    not. The application has to start either way.
+    """
+    try:
+        from PyQt6.QtWidgets import QSystemTrayIcon
+
+        return bool(QSystemTrayIcon.isSystemTrayAvailable())
+    except Exception:  # noqa: BLE001 - absence of a tray is not a failure
+        return False
+
+
 __all__ = [
     "WATCH_DEBOUNCE_SECONDS",
     "ChangeKind",
     "CoalescingWatcher",
     "PollingWatcher",
+    "QtTrayIcon",
     "SingleInstanceGuard",
     "TrayAction",
     "TrayService",
     "VaultChange",
     "VaultWatcher",
     "iter_vault_areas",
+    "tray_is_available",
 ]

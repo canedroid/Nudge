@@ -17,8 +17,8 @@ from PyQt6.QtGui import QSurfaceFormat
 from PyQt6.QtWidgets import QApplication
 
 from nodify.app.dashboard import Dashboard, VaultNotSelectedError, build_services
-from nodify.services.hotkey import HotkeyService
-from nodify.services.platform import TrayService
+from nodify.services.hotkey import HotkeyService, QtShortcutRegistrar
+from nodify.services.platform import QtTrayIcon, TrayService, tray_is_available
 from nodify.services.settings import AppSettings, SettingsError, load_or_create, save_settings
 from nodify.ui.layout.tile_layout import Rect
 from nodify.ui.overlay import Overlay
@@ -90,14 +90,36 @@ class Application:
         self.dashboard = dashboard
         self.config_dir = config_dir
         self._choose_vault = choose_vault or choose_vault_folder
-        self.hotkey = hotkey or HotkeyService(on_press=self.toggle)
-        self.tray = tray or TrayService(
-            application=app,
+        # One registrar, shared by both halves. Two instances would mean
+        # ``unregister`` ran against an object that never held the shortcut, so
+        # the system claim would outlive the process.
+        self.registrar = QtShortcutRegistrar(app, self.toggle)
+        # A real registrar, not the recording stand-in. The fallback in
+        # HotkeyService silently does nothing, which is what made Ctrl+Space
+        # appear broken in the running application while every test passed.
+        self.hotkey = hotkey or HotkeyService(
+            self.registrar.register, self.registrar.unregister, on_press=self.toggle
+        )
+        self.tray = tray or self._build_tray()
+        self._wire()
+
+    def _build_tray(self) -> TrayService:
+        """Build the tray, with a real icon when the desktop has one.
+
+        A session without a system tray still gets a working application; it just
+        has no tray, and the hotkey and the Quit button remain.
+        """
+        service = TrayService(
+            application=self.app,
             on_toggle=self.toggle,
             on_settings=self.open_settings,
             on_quit=self.quit,
         )
-        self._wire()
+        if tray_is_available():
+            service.icon = QtTrayIcon(service.trigger)
+        else:
+            self.report("No system tray on this desktop; use the hotkey or Quit.")
+        return service
 
     def _wire(self) -> None:
         self.overlay.header.settings_button.clicked.connect(self.open_settings)
@@ -231,17 +253,19 @@ class Application:
         self.overlay.show_status(message)
 
     def start(self) -> bool:
-        """Register the hotkey. Returns whether it worked.
+        """Register the hotkey and put the tray in place. Returns whether the
+        hotkey worked.
 
-        A failure is not fatal: the user can still use the tray to show the
-        overlay, and the reason is available for the UI to explain.
+        A hotkey failure is not fatal: the user can still use the tray to show
+        the overlay, and the reason is available for the UI to explain. The tray
+        is shown even when the hotkey failed, because it may be the only way left
+        to reach the application.
         """
-        if not self.hotkey.register(self.settings.hotkey):
-            self.overlay.status_message.emit(
-                self.hotkey.last_error or "The hotkey could not be registered."
-            )
-            return False
-        return True
+        registered = self.hotkey.register(self.settings.hotkey)
+        if not registered:
+            self.report(self.hotkey.last_error or "The hotkey could not be registered.")
+        self.tray.show()
+        return registered
 
     def quit(self) -> None:
         """Release the hotkey, stop the tray, then end the process."""

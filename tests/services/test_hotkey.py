@@ -188,3 +188,85 @@ class TestRecordingRegistrar:
         registrar = RecordingRegistrar()
         registrar.available = False
         assert not registrar.register(Accelerator.parse("Ctrl+K"))
+
+
+class TestQtShortcutRegistrar:
+    """The registrar the running application actually uses.
+
+    It was written against a ``str`` while the service passes a parsed
+    ``Accelerator``, and nothing exercised it, so the mismatch survived. These
+    drive it through ``HotkeyService`` rather than calling it directly, because
+    the type contract is with the service and not with the caller.
+    """
+
+    def test_registers_what_the_service_hands_it(self, qapp: object) -> None:
+        from nodify.services.hotkey import QtShortcutRegistrar
+
+        registrar = QtShortcutRegistrar(qapp)
+        service = HotkeyService(registrar.register, registrar.unregister)
+
+        assert service.register("Ctrl+Space")
+        assert service.is_registered
+        assert service.current == "Ctrl+Space"
+        service.unregister()
+
+    def test_a_parsed_accelerator_does_not_lose_its_modifiers(self, qapp: object) -> None:
+        """The bug: an Accelerator was passed straight into a parser expecting text."""
+        from PyQt6.QtGui import QKeySequence
+        from PyQt6.QtWidgets import QApplication
+
+        from nodify.services.hotkey import QtShortcutRegistrar
+
+        registrar = QtShortcutRegistrar(qapp)
+        # Both forms must produce the same Qt sequence, or the hotkey the user
+        # sees in the header is not the hotkey that fires.
+        from_object = registrar.register(Accelerator.parse("Ctrl+Shift+K"))
+        first = registrar._shortcut.key().toString(QKeySequence.SequenceFormat.PortableText)
+
+        registrar.unregister()
+        from_text = registrar.register("Ctrl+Shift+K")
+        second = registrar._shortcut.key().toString(QKeySequence.SequenceFormat.PortableText)
+
+        assert from_object and from_text
+        assert first == second
+        assert "Ctrl" in first and "Shift" in first
+        assert isinstance(QApplication.instance(), QApplication)
+
+    def test_rebinding_replaces_rather_than_stacks(self, qapp: object) -> None:
+        from nodify.services.hotkey import QtShortcutRegistrar
+
+        registrar = QtShortcutRegistrar(qapp)
+        service = HotkeyService(registrar.register, registrar.unregister)
+
+        service.register("Ctrl+Space")
+        service.register("Ctrl+Shift+K")
+
+        assert service.current == "Ctrl+Shift+K"
+        service.unregister()
+
+    def test_unregistering_twice_is_safe(self, qapp: object) -> None:
+        from nodify.services.hotkey import QtShortcutRegistrar
+
+        registrar = QtShortcutRegistrar(qapp)
+        service = HotkeyService(registrar.register, registrar.unregister)
+        service.register("Ctrl+Space")
+
+        service.unregister()
+        service.unregister()
+
+        assert not service.is_registered
+
+    def test_activating_the_shortcut_calls_back(self, qapp: object) -> None:
+        from nodify.services.hotkey import QtShortcutRegistrar
+
+        pressed: list[int] = []
+        registrar = QtShortcutRegistrar(qapp, lambda: pressed.append(1))
+        service = HotkeyService(registrar.register, registrar.unregister, on_press=lambda: None)
+        service.register("Ctrl+Space")
+
+        # Activating directly is the only way to exercise the wiring without a
+        # real keypress, which the offscreen platform will not deliver.
+        registrar._shortcut.activated.emit()
+
+        assert pressed == [1]
+        service.unregister()

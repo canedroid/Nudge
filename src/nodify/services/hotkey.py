@@ -186,11 +186,16 @@ class QtShortcutRegistrar:
         self._on_press = on_press
         self._shortcut: QShortcut | None = None
 
-    def register(self, accelerator: str) -> bool:
+    def register(self, accelerator: Accelerator | str) -> bool:
         from nodify.services.accelerator import to_qt_sequence
 
         self.unregister()
-        shortcut = QShortcut(QKeySequence(to_qt_sequence(accelerator)), self._application)
+        # The service hands over a parsed Accelerator, not a string. Converting
+        # explicitly matters: to_qt_sequence parses its argument, and feeding it
+        # an Accelerator would either fail or quietly lose the modifiers. This
+        # registrar was never wired into the application until now, so the
+        # mismatch sat here unnoticed behind a test-only stand-in.
+        shortcut = QShortcut(QKeySequence(to_qt_sequence(str(accelerator))), self._application)
         if self._on_press is not None:
             shortcut.activated.connect(self._on_press)
         self._shortcut = shortcut

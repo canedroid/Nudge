@@ -484,3 +484,88 @@ class TestStatusMessages:
 
         assert overlay.header.status.text() == ""
         overlay.deleteLater()
+
+
+class TestRealNativeServices:
+    """The application must use the working registrar, not the stand-in.
+
+    ``HotkeyService`` falls back to ``RecordingRegistrar`` when no register
+    function is supplied, which records the request and does nothing else. The
+    application relied on that fallback, so Ctrl+Space did nothing in the running
+    program while every test passed against an injected fake.
+    """
+
+    def test_the_default_hotkey_is_a_real_qt_registrar(self, qapp: object) -> None:
+        from nodify.services.hotkey import QtShortcutRegistrar
+
+        _app, overlay = build_application(["nodify-test"])
+        subject = Application(_app, overlay, AppSettings())
+
+        assert isinstance(subject.registrar, QtShortcutRegistrar)
+        overlay.deleteLater()
+
+    def test_one_registrar_serves_both_halves(self, qapp: object) -> None:
+        """Two registrars would leave the system claim behind on exit."""
+        from nodify.services.hotkey import QtShortcutRegistrar
+
+        _app, overlay = build_application(["nodify-test"])
+        subject = Application(_app, overlay, AppSettings())
+
+        subject.start()
+        assert subject.hotkey.is_registered
+        subject.quit()
+        assert not subject.hotkey.is_registered
+        assert isinstance(subject.registrar, QtShortcutRegistrar)
+        overlay.deleteLater()
+
+    def test_starting_actually_registers_on_a_real_shortcut(self, qapp: object) -> None:
+        _app, overlay = build_application(["nodify-test"])
+        subject = Application(_app, overlay, AppSettings())
+
+        assert subject.start(), subject.hotkey.last_error
+        assert subject.registrar._shortcut is not None, "no Qt shortcut was created"
+        subject.quit()
+        assert subject.registrar._shortcut is None, "the shortcut was not released"
+        overlay.deleteLater()
+
+    def test_the_tray_is_shown_on_start_and_hidden_on_quit(self, qapp: object) -> None:
+        _app, overlay = build_application(["nodify-test"])
+        subject = Application(_app, overlay, AppSettings())
+
+        subject.start()
+        assert subject.tray.is_visible()
+        subject.quit()
+        assert not subject.tray.is_visible()
+        overlay.deleteLater()
+
+    def test_the_tray_still_appears_when_the_hotkey_fails(self, qapp: object) -> None:
+        """A refused hotkey must not take the tray with it.
+
+        The tray may be the only way left to reach the application, so losing it
+        at the same time as the hotkey would leave no route back.
+        """
+        from nodify.services.hotkey import HotkeyService, RecordingRegistrar
+
+        _app, overlay = build_application(["nodify-test"])
+        registrar = RecordingRegistrar()
+        registrar.refuse.add(AppSettings().hotkey)
+        hotkey = HotkeyService(registrar.register, registrar.unregister)
+        subject = Application(_app, overlay, AppSettings(), hotkey=hotkey)
+
+        assert not subject.start()
+        assert subject.tray.is_visible(), "the tray went away with the hotkey"
+        assert overlay.header.status.text(), "the failure was not shown"
+        overlay.deleteLater()
+
+    def test_a_desktop_without_a_tray_still_starts(self, qapp: object) -> None:
+        """A session with no system tray must not stop the application."""
+        from nodify.services.platform import TrayService
+
+        _app, overlay = build_application(["nodify-test"])
+        # No icon supplied, which is what a tray-less desktop produces.
+        subject = Application(_app, overlay, AppSettings(), tray=TrayService(application=_app))
+
+        assert subject.start(), "a missing tray must not be fatal"
+        assert subject.hotkey.is_registered
+        subject.quit()
+        overlay.deleteLater()
