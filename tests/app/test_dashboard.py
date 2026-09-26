@@ -8,8 +8,10 @@ including overdue state.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -23,6 +25,10 @@ from nodify.app.dashboard import (
 from nodify.domain.clock import FixedClock
 from nodify.services.settings import AppSettings, TileGeometry
 from nodify.ui.layout.tile_layout import DEFAULT_ORDER, Rect, TileId
+from nodify.ui.tiles.tile_frame import TileFrame
+
+if TYPE_CHECKING:
+    from PyQt6.QtWidgets import QApplication, QWidget
 
 NOW = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
 AREA = Rect(0, 0, 1600, 900)
@@ -61,11 +67,18 @@ def dashboard(
     )
     yield board
     board.shutdown()
-    board.notes_panel.deleteLater()
-    board.tasks_panel.deleteLater()
-    board.timers_panel.shutdown()
-    board.timers_panel.deleteLater()
-    board.files_panel.deleteLater()
+    # A panel parented to a frame that was inside a deleted window is already
+    # gone at the C++ level, and calling deleteLater on it raises. Ask first.
+    from PyQt6.sip import isdeleted
+
+    for panel in (
+        board.notes_panel,
+        board.tasks_panel,
+        board.timers_panel,
+        board.files_panel,
+    ):
+        if not isdeleted(panel):
+            panel.deleteLater()
 
 
 class TestComposition:
@@ -415,3 +428,146 @@ class TestIndependence:
             assert replacement._repository is not None
         finally:
             replacement.deleteLater()
+
+
+class TestMounting:
+    """The panels are on screen, not merely constructed.
+
+    This is the class that would have caught the original defect. Every other test
+    in the suite passed while ``main()`` never mounted a single panel, because
+    "the object exists" was being checked where "the object is visible" is what
+    matters. These assert parenting, visibility and real geometry.
+    """
+
+    @pytest.fixture
+    def host(self, qapp: QApplication, dashboard: Dashboard) -> Iterator[QWidget]:
+        """A window to mount into, torn down in the only order that is safe.
+
+        The dashboard must release its frames *before* the window is destroyed.
+        A frame is the panels' parent, so deleting the window first would destroy
+        the panels and leave ``shutdown()`` touching a deleted C++ object.
+        """
+        from PyQt6.QtWidgets import QWidget
+
+        widget = QWidget()
+        widget.setGeometry(0, 0, AREA.width, AREA.height)
+        widget.show()
+        qapp.processEvents()
+        yield widget
+        dashboard.shutdown()
+        widget.deleteLater()
+
+    def test_mounting_gives_every_panel_a_frame_parented_to_the_host(
+        self, dashboard: Dashboard, host: QWidget
+    ) -> None:
+        frames = dashboard.mount(host, AREA)
+
+        assert set(frames) == set(DEFAULT_ORDER)
+        for tile, frame in frames.items():
+            assert frame.parentWidget() is host, f"{tile} is not in the window"
+            assert frame.content is dashboard.panels()[tile]
+
+    def test_every_mounted_panel_is_visible_with_real_geometry(
+        self, dashboard: Dashboard, host: QWidget, qapp: QApplication
+    ) -> None:
+        dashboard.mount(host, AREA)
+        qapp.processEvents()
+
+        for tile, frame in dashboard.frames.items():
+            assert frame.isVisible(), f"{tile} is not visible"
+            assert frame.width() > 0, f"{tile} has no width"
+            assert frame.height() > 0, f"{tile} has no height"
+            assert frame.content.isVisible(), f"the panel inside {tile} is hidden"
+
+    def test_tiles_sit_inside_the_mounting_area(self, dashboard: Dashboard, host: QWidget) -> None:
+        """A tile outside the window is invisible to the user however valid it is."""
+        dashboard.mount(host, AREA)
+
+        for tile in dashboard.frames:
+            rect = dashboard.geometry_for(tile)
+            assert AREA.contains_point(rect.x, rect.y), f"{tile} starts outside the area"
+            assert rect.right <= AREA.right, f"{tile} overflows to the right"
+            assert rect.bottom <= AREA.bottom, f"{tile} overflows the bottom"
+
+    def test_frames_do_not_overlap_each_other(self, dashboard: Dashboard, host: QWidget) -> None:
+        """Overlapping tiles hide each other's content, so this is a real defect."""
+        dashboard.mount(host, AREA)
+
+        rects = [dashboard.geometry_for(tile) for tile in DEFAULT_ORDER]
+        for index, first in enumerate(rects):
+            for second in rects[index + 1 :]:
+                assert not first.intersects(second), f"{first} overlaps {second}"
+
+    def test_mounting_twice_reuses_the_frames(self, dashboard: Dashboard, host: QWidget) -> None:
+        """The overlay is shown and hidden repeatedly; a second set of frames would
+        stack on top of the first and each would steal the other's clicks."""
+        first = dashboard.mount(host, AREA)
+        second = dashboard.mount(host, AREA)
+
+        assert {id(f) for f in first.values()} == {id(f) for f in second.values()}
+        assert len(host.findChildren(TileFrame)) == len(DEFAULT_ORDER)
+
+    def test_remounting_releases_the_old_frames(
+        self, dashboard: Dashboard, host: QWidget, qapp: QApplication
+    ) -> None:
+        """A fresh dashboard on a new window must not leave the old one behind."""
+        from PyQt6.QtWidgets import QWidget
+
+        other = QWidget()
+        other.setGeometry(0, 0, AREA.width, AREA.height)
+        try:
+            dashboard.mount(host, AREA)
+            dashboard.mount(other, AREA)
+            qapp.processEvents()
+
+            for tile, frame in dashboard.frames.items():
+                assert frame.parentWidget() is other, f"{tile} stayed on the old window"
+        finally:
+            # The frames are children of ``other``, so deleting it would take the
+            # panels with it. Release them first.
+            dashboard.shutdown()
+            other.deleteLater()
+
+    def test_shrinking_the_area_keeps_every_tile_inside_it(
+        self, dashboard: Dashboard, host: QWidget
+    ) -> None:
+        """A resolution change must not strand a tile off-screen."""
+        dashboard.mount(host, AREA)
+
+        smaller = Rect(0, 0, 900, 500)
+        dashboard.relayout(smaller)
+
+        for tile in DEFAULT_ORDER:
+            rect = dashboard.geometry_for(tile)
+            assert rect.right <= smaller.right, f"{tile} overflows after shrinking"
+            assert rect.bottom <= smaller.bottom, f"{tile} overflows after shrinking"
+
+    def test_a_saved_layout_is_not_overwritten_by_mounting(
+        self, dashboard: Dashboard, host: QWidget, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mounting runs on every launch.
+
+        It must not persist the default arrangement, or the first show would
+        replace the layout the user had arranged and saved.
+        """
+        dashboard.mount(host, AREA)
+        dashboard.persist_layout()
+
+        saved = dashboard.settings.layout
+        assert saved, "mounting should have produced a stored layout"
+
+        second = Dashboard(dashboard.services, dashboard.settings)
+        try:
+            second.mount(host, AREA)
+            assert second.settings.layout == saved, "the saved layout was lost on mount"
+        finally:
+            second.shutdown()
+
+    def test_shutdown_releases_the_frames(self, dashboard: Dashboard, host: QWidget) -> None:
+        dashboard.mount(host, AREA)
+        assert dashboard.is_mounted
+
+        dashboard.shutdown()
+
+        assert not dashboard.is_mounted
+        assert host.findChildren(TileFrame) == []

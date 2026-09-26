@@ -13,10 +13,11 @@ a hotkey with no modifier are all reachable by hand-editing the file, and each
 would produce a broken or unsafe window. Every value is validated at the boundary
 so no consumer has to defend itself.
 
-The user-editable ``config.toml`` sits beside this and is layered on top; see
-:mod:`nodify.services.config`. The split is deliberate: ``settings.json`` is
-written by the application and is the remembered state, while ``config.toml`` is
-hand-edited and is the user's stated preference.
+A hand-edited ``config.toml`` layered on top of this file is **planned but not
+built**. Until it exists, ``settings.json`` is the only source, and editing it by
+hand is the override mechanism. This docstring previously pointed at
+:mod:`nodify.services.config`, a module that was never written, which would have
+sent the next person looking for a file that does not exist.
 """
 
 from __future__ import annotations

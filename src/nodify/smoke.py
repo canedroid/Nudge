@@ -24,6 +24,7 @@ def main() -> int:
     from nodify.domain.clock import FixedClock
     from nodify.services.hotkey import HotkeyService, RecordingRegistrar
     from nodify.services.settings import AppSettings
+    from nodify.ui.layout.tile_layout import Rect
 
     configure_surface_format()
     from PyQt6.QtWidgets import QApplication
@@ -57,18 +58,39 @@ def main() -> int:
     from nodify.ui.overlay import Overlay
 
     overlay = Overlay()
-    overlay.show()
+    overlay.setGeometry(0, 0, 1600, 900)
+    overlay.show_overlay()
     app.processEvents()
 
+    # Mount for real. An earlier version of this check printed "tiles mounted: 4"
+    # while only constructing the panels, which read like reassurance and proved
+    # nothing: nothing was ever a child of a window. Assert what the user would
+    # see instead, using the overlay's own tile area so the real geometry path is
+    # what gets exercised.
+    region = overlay.tile_area()
+    area = dashboard.mount(overlay, Rect(region.x(), region.y(), region.width(), region.height()))
+    app.processEvents()
+
+    visible = sum(1 for frame in area.values() if frame.isVisible() and frame.width() > 0)
     print(f"platform: {app.platformName()}")
     print(f"overlay visible: {overlay.isVisible()}  size: {overlay.width()}x{overlay.height()}")
     print(f"click-through: {overlay.click_through}")
     print(f"hotkey registered: {registered} ({hotkey.current})")
-    print(f"tiles mounted: {len(dashboard.panels())}")
-    for name, panel in dashboard.panels().items():
-        print(f"  {name.value:8} {type(panel).__name__}")
+    print(f"tiles visible: {visible}/{len(area)}")
+    for tile, frame in area.items():
+        rect = dashboard.geometry_for(tile)
+        inside = (
+            "in" if overlay.rect().contains(frame.geometry().topLeft()) else "OUTSIDE THE OVERLAY"
+        )
+        print(
+            f"  {tile.value:8} {type(frame.content).__name__:14} "
+            f"{frame.width():>4}x{frame.height():<4} at ({rect.x},{rect.y}) {inside}"
+        )
     print(f"vault: {vault.root.name}")
     print(f"bridge enabled: {dashboard.bridge.is_enabled()}")
+
+    if visible != len(area):
+        raise SystemExit(f"only {visible} of {len(area)} tiles are actually on screen")
 
     # A real mutation, to prove the panels are wired to the vault and not stubs.
     note = services.notes.create("Smoke note", "Smoke", "written by the smoke test\n")
@@ -76,6 +98,12 @@ def main() -> int:
     listed = dashboard.files_panel._list.count()
     print(f"note written: {note.id} | files listed: {listed}")
     print(f"note body round-trips: {services.notes.get(note.id).body.strip()!r}")
+
+    # And that it reached the disk, not just the in-memory index.
+    on_disk = sorted(p.name for p in (root / "notes" / "Smoke").glob("*.md"))
+    print(f"note on disk: {on_disk}")
+    if not on_disk:
+        raise SystemExit("the note never reached the vault")
 
     dashboard.shutdown()
     hotkey.unregister()

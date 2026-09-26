@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from PyQt6.QtWidgets import QWidget
+
 from nodify.adapters.category_repo import FileSystemCategoryRepository
 from nodify.adapters.note_repo import MarkdownNoteRepository
 from nodify.adapters.task_repo import MarkdownTaskRepository
@@ -44,6 +46,7 @@ from nodify.ui.layout.tile_layout import (
 from nodify.ui.tiles.files_panel import FilesPanel
 from nodify.ui.tiles.notes_panel import NotesPanel
 from nodify.ui.tiles.tasks_panel import TasksPanel
+from nodify.ui.tiles.tile_frame import TileFrame
 from nodify.ui.tiles.timers_panel import TimersPanel
 
 
@@ -98,6 +101,12 @@ class Dashboard:
         self._notifier = ReminderNotifier(services.timers, self._notifications, services.clock.now)
         self._bridge = PhoneBridgeService(now=services.clock.now)
         self._layout = TileLayout(LayoutState())
+        #: The mounted tile frames, empty until :meth:`mount` is called.
+        self._frames: dict[TileId, TileFrame] = {}
+        #: The widget the frames are parented to, so a remount can be detected.
+        self._mounted_to: QWidget | None = None
+        #: Whether :meth:`shutdown` has already run.
+        self._stopped = False
         #: Recoverable problems reported by panels, newest last.
         self.errors: list[str] = []
 
@@ -184,16 +193,82 @@ class Dashboard:
         self._layout.reset(area, gap=gap)
         self._persist_layout()
 
-    def restore_layout(self, area: Rect) -> None:
-        """Restore the saved geometry, falling back to the default arrangement."""
-        self._layout.reset(area)
+    def restore_layout(self, area: Rect, *, gap: int = 16) -> None:
+        """Restore the saved geometry, falling back to the default arrangement.
+
+        This deliberately does not persist. Mounting runs on every launch, and
+        persisting here would overwrite the arrangement the user saved with the
+        default one the first time the overlay is shown.
+        """
+        self._layout.reset(area, gap=gap)
         bounds = Rect(area.x, area.y, area.width, area.height)
+        stored = self._settings.layout
         for index, tile in enumerate(self._layout.state.order):
-            geometry = self._settings.tile(index).clamped()
+            # Only tiles the user actually arranged are restored. ``AppSettings.tile``
+            # answers an unstored index with a default 520x640 rectangle, whose width
+            # is truthy, so a truthiness guard would look like it worked while
+            # quietly replacing the computed default with four tiles stacked at the
+            # origin.
+            if index >= len(stored):
+                continue
+            geometry = stored[index].clamped()
             if geometry.width and geometry.height:
                 restored = Rect(geometry.x, geometry.y, geometry.width, geometry.height)
                 self._layout.state.tiles[tile] = restored.clamped_to(bounds)
         self._layout.set_bounds(area)
+
+    # ------------------------------------------------------------- mounting
+
+    def mount(self, parent: QWidget, area: Rect, *, gap: int = 16) -> dict[TileId, TileFrame]:
+        """Host every panel in a draggable frame inside ``parent``.
+
+        This is what makes the panels visible. Until a panel is a child of a real
+        widget with a real geometry, it exists but is never painted, which is the
+        difference between "the tests pass" and "there is an application".
+
+        Idempotent: showing the overlay repeatedly re-uses the frames rather than
+        stacking a second set on top of the first.
+        """
+        if self._mounted_to is parent and self._frames:
+            self.relayout(area, gap=gap)
+            return self._frames
+
+        self.restore_layout(area, gap=gap)
+        frames: dict[TileId, TileFrame] = {}
+        for tile in DEFAULT_ORDER:
+            frame = TileFrame(tile, self.panels()[tile], parent)
+            frame.apply_rect(self.geometry_for(tile))
+            # Parenting does not show a child. Qt only shows widgets that existed
+            # when their parent was shown, so a frame created into an already
+            # visible window stays hidden until it is told otherwise.
+            frame.show()
+            frames[tile] = frame
+        self._frames = frames
+        self._mounted_to = parent
+        self._stopped = False
+        return frames
+
+    def relayout(self, area: Rect, *, gap: int = 16) -> None:
+        """Re-clamp and re-apply the frames after the area changed size.
+
+        Used on a resolution change. Saved rectangles are absolute, so on a
+        smaller screen they can fall outside the new bounds; the restore path
+        clamps them rather than letting a tile land somewhere unreachable.
+        """
+        if not self._frames:
+            return
+        self.restore_layout(area, gap=gap)
+        for tile, frame in self._frames.items():
+            frame.apply_rect(self.geometry_for(tile))
+
+    @property
+    def frames(self) -> dict[TileId, TileFrame]:
+        """The mounted frames, keyed by tile. Empty until :meth:`mount`."""
+        return dict(self._frames)
+
+    @property
+    def is_mounted(self) -> bool:
+        return bool(self._frames)
 
     def layout_state(self) -> LayoutState:
         return self._layout.state
@@ -254,9 +329,21 @@ class Dashboard:
     # ------------------------------------------------------------- shutdown
 
     def shutdown(self) -> None:
-        """Release everything. A hidden overlay must cost nothing when stopped."""
+        """Release everything. A hidden overlay must cost nothing when stopped.
+
+        Safe to call more than once. Both the quit path and a test teardown can
+        arrive here, and a second pass would reach a QTimer whose C++ object was
+        already destroyed along with its window.
+        """
+        if self._stopped:
+            return
+        self._stopped = True
         self.stop_watching()
         self.timers_panel.shutdown()
+        for frame in self._frames.values():
+            frame.setParent(None)
+        self._frames.clear()
+        self._mounted_to = None
 
     # ------------------------------------------------------------ accessors
 
@@ -276,7 +363,7 @@ class Dashboard:
     def notifications(self) -> NotificationService:
         return self._notifications
 
-    def panels(self) -> dict[TileId, object]:
+    def panels(self) -> dict[TileId, QWidget]:
         """Every mounted panel, keyed by the tile it lives in."""
         return {
             TileId.TIMERS: self.timers_panel,

@@ -16,6 +16,7 @@ from pathlib import Path
 from PyQt6.QtGui import QSurfaceFormat
 from PyQt6.QtWidgets import QApplication
 
+from nodify.app.dashboard import Dashboard
 from nodify.services.hotkey import HotkeyService
 from nodify.services.platform import TrayService
 from nodify.services.settings import AppSettings, load_or_create
@@ -56,12 +57,14 @@ class Application:
         overlay: Overlay,
         settings: AppSettings | None = None,
         *,
+        dashboard: Dashboard | None = None,
         hotkey: HotkeyService | None = None,
         tray: TrayService | None = None,
     ) -> None:
         self.app = app
         self.overlay = overlay
         self.settings = settings or AppSettings()
+        self.dashboard = dashboard
         self.hotkey = hotkey or HotkeyService(on_press=self.toggle)
         self.tray = tray or TrayService(
             application=app,
@@ -75,6 +78,16 @@ class Application:
         self.overlay.header.settings_button.clicked.connect(self.open_settings)
         self.overlay.header.hide_button.clicked.connect(self.overlay.hide)
         self.overlay.header.quit_button.clicked.connect(self.quit)
+        self.overlay.resized.connect(self._on_overlay_resized)
+
+    def _on_overlay_resized(self) -> None:
+        """Re-place the tiles when the overlay changes size.
+
+        The saved rectangles are absolute, so a resolution change or a move to
+        another monitor would otherwise leave tiles outside the visible area.
+        """
+        if self.dashboard is not None:
+            self.dashboard.relayout(self.tile_area())
 
     # ------------------------------------------------------------- behaviour
 
@@ -85,6 +98,17 @@ class Application:
         """Show the overlay over the screen under the cursor."""
         self.overlay.show_overlay()
         self.overlay.set_click_through(self.settings.click_through)
+        self.mount_dashboard()
+
+    def mount_dashboard(self) -> None:
+        """Put the panels on screen, now that the overlay has a real size.
+
+        Mounting happens here rather than at construction because the tiles need
+        the overlay's geometry, which is only known once it covers a screen.
+        """
+        if self.dashboard is None:
+            return
+        self.dashboard.mount(self.overlay, self.tile_area())
 
     def hide(self) -> None:
         self.overlay.hide()
@@ -129,6 +153,8 @@ class Application:
     def quit(self) -> None:
         """Release the hotkey, stop the tray, then end the process."""
         self.hotkey.unregister()
+        if self.dashboard is not None:
+            self.dashboard.shutdown()
         self.tray.hide()
         self.app.quit()
 

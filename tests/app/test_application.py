@@ -194,3 +194,112 @@ class TestVisibility:
         assert area.width > 0
         assert area.height > 0
         overlay.deleteLater()
+
+
+class TestShowMountsTheDashboard:
+    """Showing the overlay must put the panels on screen.
+
+    ``Application.show()`` is what a user sees when they press the hotkey, and for
+    the whole of Package J it mounted nothing: the overlay appeared with an empty
+    rectangle in it. These tests drive the real ``show()`` rather than a dashboard
+    method, because the wiring between the two is exactly what was missing.
+    """
+
+    @pytest.fixture
+    def subject(self, qapp: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Application:
+        from nodify.adapters.vault import Vault, create
+        from nodify.app.dashboard import Dashboard, Services
+
+        monkeypatch.setenv("NODIFY_CONFIG_DIR", str(tmp_path / "config"))
+        root = tmp_path / "vault"
+        create(root, initial_year_month="2026-09")
+        vault = Vault(root)
+        vault.open()
+
+        _app, overlay = build_application(["nodify-test"])
+        dashboard = Dashboard(Services(vault=vault), AppSettings())
+        application = Application(_app, overlay, AppSettings(), dashboard=dashboard)
+        yield application
+        application.dashboard.shutdown()
+
+    def test_showing_mounts_every_panel_into_the_overlay(
+        self, subject: Application, qapp: object
+    ) -> None:
+        assert not subject.dashboard.is_mounted
+
+        subject.show()
+        qapp.processEvents()
+
+        assert subject.dashboard.is_mounted
+        for tile, frame in subject.dashboard.frames.items():
+            assert frame.parentWidget() is subject.overlay, f"{tile} is not in the overlay"
+
+    def test_the_panels_are_actually_visible_after_showing(
+        self, subject: Application, qapp: object
+    ) -> None:
+        subject.show()
+        qapp.processEvents()
+
+        for tile, frame in subject.dashboard.frames.items():
+            assert frame.isVisible(), f"{tile} is not visible"
+            assert frame.width() > 0 and frame.height() > 0, f"{tile} has no area"
+            assert frame.content.isVisible(), f"the panel inside {tile} is hidden"
+
+    def test_tiles_land_inside_the_overlay(self, subject: Application, qapp: object) -> None:
+        """A tile placed outside the window is invisible however correct it is."""
+        subject.show()
+        qapp.processEvents()
+
+        area = subject.tile_area()
+        for tile in subject.dashboard.frames:
+            rect = subject.dashboard.geometry_for(tile)
+            assert area.contains_point(rect.x, rect.y), f"{tile} is outside the overlay"
+            assert rect.right <= area.right, f"{tile} overflows the overlay"
+
+    def test_hiding_and_showing_again_keeps_the_panels(
+        self, subject: Application, qapp: object
+    ) -> None:
+        """The overlay is toggled constantly; each toggle must not lose the panels."""
+        subject.show()
+        subject.hide()
+        subject.show()
+        qapp.processEvents()
+
+        assert len(subject.dashboard.frames) == 4
+        for tile, frame in subject.dashboard.frames.items():
+            assert frame.isVisible(), f"{tile} disappeared after a toggle"
+
+    def test_a_dashboard_free_application_still_shows(self, qapp: object) -> None:
+        """No vault yet must not stop the overlay appearing."""
+        _app, overlay = build_application(["nodify-test"])
+        subject = Application(_app, overlay, AppSettings())
+
+        subject.show()
+        assert subject.is_visible()
+        assert subject.dashboard is None
+        overlay.deleteLater()
+
+    def test_quit_releases_the_dashboard(self, subject: Application, qapp: object) -> None:
+        """Otherwise the watcher thread outlives the process."""
+        subject.show()
+        assert subject.dashboard.is_mounted
+
+        subject.quit()
+
+        assert not subject.dashboard.is_mounted
+
+    def test_resizing_the_overlay_repositions_the_tiles(
+        self, subject: Application, qapp: object
+    ) -> None:
+        """The saved rectangles are absolute, so a resolution change strands them."""
+        subject.show()
+        qapp.processEvents()
+
+        subject.overlay.resize(900, 600)
+        qapp.processEvents()
+
+        area = subject.tile_area()
+        for tile in subject.dashboard.frames:
+            rect = subject.dashboard.geometry_for(tile)
+            assert rect.right <= area.right, f"{tile} overflowed after the resize"
+            assert rect.bottom <= area.bottom, f"{tile} overflowed after the resize"

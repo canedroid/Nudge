@@ -50,6 +50,11 @@ class Overlay(QWidget):
     #: disturbing the layout the user arranged.
     status_message = pyqtSignal(str)
 
+    #: Emitted after the overlay's geometry changed, so a host can re-place the
+    #: tiles. The tile rectangles are absolute, so a resolution change would
+    #: otherwise leave them outside the new bounds.
+    resized = pyqtSignal()
+
     def __init__(self, on_quit: Callable[[], None] | None = None) -> None:
         super().__init__(
             None,
@@ -93,6 +98,7 @@ class Overlay(QWidget):
     def resizeEvent(self, event: QResizeEvent | None) -> None:  # noqa: N802 (Qt naming)
         super().resizeEvent(event)
         self._place_header()
+        self.resized.emit()
 
     # ----------------------------------------------------------- click-through
 
