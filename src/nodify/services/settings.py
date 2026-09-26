@@ -95,6 +95,14 @@ class AppSettings:
         object.__setattr__(self, "vault_path", str(self.vault_path or ""))
         object.__setattr__(self, "layout", tuple(t.clamped() for t in self.layout))
 
+    def with_vault_path(self, path: str) -> AppSettings:
+        """A copy pointing at a different vault.
+
+        Returns a new value rather than mutating, matching ``with_tile``, so a
+        caller holding the old settings is unaffected by the change.
+        """
+        return replace(self, vault_path=str(path or ""))
+
     def with_tile(self, index: int, geometry: TileGeometry) -> AppSettings:
         """A copy with one tile's geometry replaced.
 

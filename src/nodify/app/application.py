@@ -10,21 +10,42 @@ click-through state inconsistent.
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from PyQt6.QtGui import QSurfaceFormat
 from PyQt6.QtWidgets import QApplication
 
-from nodify.app.dashboard import Dashboard
+from nodify.app.dashboard import Dashboard, VaultNotSelectedError, build_services
 from nodify.services.hotkey import HotkeyService
 from nodify.services.platform import TrayService
-from nodify.services.settings import AppSettings, load_or_create
+from nodify.services.settings import AppSettings, SettingsError, load_or_create, save_settings
 from nodify.ui.layout.tile_layout import Rect
 from nodify.ui.overlay import Overlay
 
 ORGANISATION = "canedroid"
 APPLICATION = "Nodify"
+
+#: Asks the user for a folder. Returns an empty string when they cancel.
+ChooseVault = Callable[[], str]
+
+
+def choose_vault_folder() -> str:
+    """Ask for the vault folder with the platform's own dialog.
+
+    Only the application layer calls a real dialog. Everything below it takes the
+    result as a plain string, which is why the whole vault path can be exercised
+    in tests without a user present.
+    """
+    from PyQt6.QtWidgets import QFileDialog
+
+    chosen = QFileDialog.getExistingDirectory(
+        None,
+        "Choose your Nodify vault",
+        "",
+        QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.ReadOnly,
+    )
+    return chosen or ""
 
 
 def configure_surface_format() -> None:
@@ -60,11 +81,15 @@ class Application:
         dashboard: Dashboard | None = None,
         hotkey: HotkeyService | None = None,
         tray: TrayService | None = None,
+        choose_vault: ChooseVault | None = None,
+        config_dir: Path | None = None,
     ) -> None:
         self.app = app
         self.overlay = overlay
         self.settings = settings or AppSettings()
         self.dashboard = dashboard
+        self.config_dir = config_dir
+        self._choose_vault = choose_vault or choose_vault_folder
         self.hotkey = hotkey or HotkeyService(on_press=self.toggle)
         self.tray = tray or TrayService(
             application=app,
@@ -79,6 +104,11 @@ class Application:
         self.overlay.header.hide_button.clicked.connect(self.overlay.hide)
         self.overlay.header.quit_button.clicked.connect(self.quit)
         self.overlay.resized.connect(self._on_overlay_resized)
+        # A hotkey that fails, or a folder that is not a vault, has to be visible
+        # somewhere or the user is left with an application that quietly did
+        # nothing.
+        self.overlay.status_message.connect(self.overlay.header.show_status)
+        self.overlay.header.hotkey_chip.setText(self.settings.hotkey)
 
     def _on_overlay_resized(self) -> None:
         """Re-place the tiles when the overlay changes size.
@@ -110,6 +140,12 @@ class Application:
             return
         self.dashboard.mount(self.overlay, self.tile_area())
 
+    def start_watching(self) -> None:
+        """Watch the vault so edits made in Obsidian show up here too."""
+        if self.dashboard is None:
+            return
+        self.dashboard.start_watching()
+
     def hide(self) -> None:
         self.overlay.hide()
 
@@ -136,6 +172,63 @@ class Application:
         """Settings are not built yet. The button reports that rather than
         silently doing nothing, which would look like a broken application."""
         self.overlay.status_message.emit("Settings are not available yet.")
+
+    # ----------------------------------------------------------- the vault
+
+    def resolve_vault(self) -> Path | None:
+        """Work out which vault to use, asking the user only if we must.
+
+        Returns ``None`` when there is no vault and the user declined to choose
+        one. That is not an error: they may have cancelled by accident, and
+        closing the application is better than showing an overlay with nothing
+        in it and no explanation.
+        """
+        remembered = self.settings.vault_path.strip()
+        if remembered and Path(remembered).is_dir():
+            return Path(remembered)
+
+        chosen = self._choose_vault().strip()
+        if not chosen:
+            return None
+
+        path = Path(chosen)
+        self.remember_vault(path)
+        return path
+
+    def remember_vault(self, path: Path) -> None:
+        """Store the chosen vault so the dialog is not shown again.
+
+        A failure to write is not fatal: the vault still works for this session,
+        and the user will be asked again next time rather than being left with a
+        vault they cannot get back to.
+        """
+        self.settings = self.settings.with_vault_path(str(path))
+        try:
+            save_settings(self.settings, self.config_dir)
+        except SettingsError:
+            self.report(f"Using {path}, but it could not be remembered for next time.")
+
+    def build_dashboard(self, vault_path: Path) -> Dashboard | None:
+        """Open the vault and build the panel set for it.
+
+        A folder that is missing or is not a vault is reported and returns
+        ``None``, rather than raising out of the startup path where the user would
+        see a crashed window and nothing else.
+        """
+        try:
+            services = build_services(vault_path)
+        except VaultNotSelectedError as exc:
+            self.report(f"That folder cannot be used as a vault: {exc}")
+            return None
+        return Dashboard(services, self.settings)
+
+    def report(self, message: str) -> None:
+        """Surface a message the user needs to see.
+
+        The overlay has no room for chrome that does not disturb the layout, so
+        messages are collected and shown in the header's status area.
+        """
+        self.overlay.show_status(message)
 
     def start(self) -> bool:
         """Register the hotkey. Returns whether it worked.
@@ -190,17 +283,43 @@ def build_application(argv: Sequence[str] | None = None) -> tuple[QApplication, 
 
 
 def build_configured_application(
-    argv: Sequence[str] | None = None, config_dir: Path | None = None
+    argv: Sequence[str] | None = None,
+    config_dir: Path | None = None,
+    *,
+    choose_vault: ChooseVault | None = None,
 ) -> Application:
-    """Build the application with settings loaded from disk."""
+    """Build the application with settings loaded from disk.
+
+    Deliberately does **not** resolve the vault. This function is also how tests
+    and tools construct an application, and prompting for a folder here would put
+    a modal dialog in front of anything that merely wanted the settings. Vault
+    resolution belongs to the entry point, which is the only place that knows a
+    person is present.
+    """
     app, overlay = build_application(argv)
     settings = load_or_create(config_dir).settings
-    return Application(app, overlay, settings)
+    return Application(
+        app,
+        overlay,
+        settings,
+        choose_vault=choose_vault,
+        config_dir=config_dir,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point used by ``python -m nodify``."""
     application = build_configured_application(argv)
+    vault = application.resolve_vault()
+    if vault is None:
+        # The user cancelled the folder dialog. There is nothing to show, and an
+        # empty overlay on screen would look like a hang rather than a decision.
+        return 0
+    application.dashboard = application.build_dashboard(vault)
+    if application.dashboard is None:
+        # The folder is not a usable vault. Already reported by build_dashboard.
+        return 0
     application.start()
+    application.start_watching()
     application.show()
     return application.app.exec()

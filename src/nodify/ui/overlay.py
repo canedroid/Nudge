@@ -76,6 +76,11 @@ class Overlay(QWidget):
 
     # ------------------------------------------------------------------ setup
 
+    def show_status(self, message: str) -> None:
+        """Put a message in the header and emit it for anyone listening."""
+        self.header.show_status(message)
+        self.status_message.emit(message)
+
     def _place_header(self) -> None:
         self.header.setGeometry(
             QRect(

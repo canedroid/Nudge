@@ -8,6 +8,7 @@ test passed settings in explicitly or called the loader with defaults. The gap w
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ from nodify.app.application import (
     build_application,
     build_configured_application,
 )
-from nodify.services.settings import AppSettings, settings_path
+from nodify.services.settings import AppSettings, load_settings, settings_path
 
 
 @pytest.fixture
@@ -303,3 +304,183 @@ class TestShowMountsTheDashboard:
             rect = subject.dashboard.geometry_for(tile)
             assert rect.right <= area.right, f"{tile} overflowed after the resize"
             assert rect.bottom <= area.bottom, f"{tile} overflowed after the resize"
+
+
+class TestResolvingTheVault:
+    """Choosing a vault, once, and remembering it.
+
+    The entry point needs a vault before it can show anything useful, and it has
+    to ask the user for one the first time. The dialog is injected so this can be
+    driven without a person present: a real ``QFileDialog`` blocks the event loop,
+    which is exactly the trap that made an earlier version of this hang the suite.
+    """
+
+    @pytest.fixture
+    def vault(self, tmp_path: Path) -> Path:
+        from nodify.adapters.vault import create
+
+        root = tmp_path / "vault"
+        create(root, initial_year_month="2026-09")
+        return root
+
+    @pytest.fixture
+    def asked(self) -> list[str]:
+        """Records which folder the application would have asked for."""
+        return []
+
+    def build(
+        self,
+        config_dir: Path,
+        asked: list[str],
+        answer: str,
+        settings: AppSettings | None = None,
+    ) -> Application:
+        _app, overlay = build_application(["nodify-test"])
+
+        def choose() -> str:
+            asked.append(answer)
+            return answer
+
+        return Application(
+            _app,
+            overlay,
+            settings or AppSettings(),
+            choose_vault=choose,
+            config_dir=config_dir,
+        )
+
+    def test_a_first_run_asks_for_a_folder(self, isolated_config: Path, asked: list[str]) -> None:
+        subject = self.build(isolated_config, asked, "")
+
+        subject.resolve_vault()
+
+        assert asked, "the user was never asked which vault to use"
+
+    def test_a_remembered_vault_is_not_asked_for_again(
+        self, isolated_config: Path, vault: Path, asked: list[str], qapp: object
+    ) -> None:
+        subject = self.build(isolated_config, asked, "", AppSettings(vault_path=str(vault)))
+
+        resolved = subject.resolve_vault()
+
+        assert resolved == vault
+        assert asked == [], "the dialog was shown despite a remembered vault"
+
+    def test_the_chosen_vault_is_remembered_for_next_time(
+        self, isolated_config: Path, vault: Path, asked: list[str]
+    ) -> None:
+        subject = self.build(isolated_config, asked, str(vault))
+
+        subject.resolve_vault()
+
+        assert subject.settings.vault_path == str(vault)
+        # Read it back as JSON rather than searching the text: a Windows path is
+        # full of backslashes, which JSON escapes, so a substring check would
+        # fail on a file that is perfectly correct.
+        written = json.loads(settings_path(isolated_config).read_text(encoding="utf-8"))
+        assert written["vault_path"] == str(vault)
+
+    def test_a_default_settings_object_knows_no_vault(self) -> None:
+        """Guards the assertion above from passing for the wrong reason."""
+        assert AppSettings().vault_path == ""
+
+    def test_the_remembered_vault_survives_a_restart(
+        self, isolated_config: Path, vault: Path, asked: list[str]
+    ) -> None:
+        first = self.build(isolated_config, asked, str(vault))
+        first.resolve_vault()
+
+        # A real restart re-reads the file rather than carrying the object over.
+        reloaded = load_settings(isolated_config)
+        second = self.build(isolated_config, asked, "", reloaded.settings)
+
+        assert second.resolve_vault() == vault
+        assert asked == [str(vault)], "the second run asked again"
+
+    def test_cancelling_the_dialog_is_not_an_error(
+        self, isolated_config: Path, asked: list[str]
+    ) -> None:
+        """A dialog the user dismissed by accident must not crash the application."""
+        subject = self.build(isolated_config, asked, "")
+
+        assert subject.resolve_vault() is None
+        assert subject.settings.vault_path == "", "a cancelled choice must not be stored"
+
+    def test_a_remembered_vault_that_has_gone_asks_again(
+        self, isolated_config: Path, asked: list[str], tmp_path: Path
+    ) -> None:
+        """A vault on a drive that is no longer plugged in must not be fatal."""
+        missing = tmp_path / "unplugged"
+        subject = self.build(isolated_config, asked, "", AppSettings(vault_path=str(missing)))
+
+        subject.resolve_vault()
+
+        assert asked, "a vault that no longer exists should prompt for a new one"
+
+    def test_a_folder_that_is_not_a_vault_is_reported(
+        self, isolated_config: Path, tmp_path: Path
+    ) -> None:
+        """The user must be told why nothing appeared, not left guessing."""
+        from PyQt6.sip import isdeleted
+
+        empty = tmp_path / "not-a-vault"
+        empty.mkdir()
+        _app, overlay = build_application(["nodify-test"])
+        subject = Application(_app, overlay, AppSettings(), config_dir=isolated_config)
+
+        result = subject.build_dashboard(empty)
+
+        assert result is None
+        assert overlay.header.status.text(), "the failure was not shown to the user"
+        assert not isdeleted(overlay)
+
+    def test_a_valid_vault_builds_a_dashboard(self, isolated_config: Path, vault: Path) -> None:
+        _app, overlay = build_application(["nodify-test"])
+        subject = Application(_app, overlay, AppSettings(), config_dir=isolated_config)
+
+        dashboard = subject.build_dashboard(vault)
+
+        assert dashboard is not None
+        assert dashboard.services.vault.root == vault
+        dashboard.shutdown()
+
+
+class TestStatusMessages:
+    """A problem the user cannot see looks like an application that did nothing."""
+
+    def test_a_message_reaches_the_header(self, qapp: object) -> None:
+        _app, overlay = build_application(["nodify-test"])
+        subject = Application(_app, overlay, AppSettings())
+
+        subject.report("something went wrong")
+
+        assert overlay.header.status.text() == "something went wrong"
+        overlay.show()
+        assert overlay.header.status.isVisibleTo(overlay), "the message is not on screen"
+        overlay.deleteLater()
+
+    def test_the_hotkey_chip_shows_the_configured_combination(self, qapp: object) -> None:
+        _app, overlay = build_application(["nodify-test"])
+        Application(_app, overlay, AppSettings(hotkey="Ctrl+Shift+K"))
+        assert overlay.header.hotkey_chip.text() == "Ctrl+Shift+K"
+        overlay.deleteLater()
+
+    def test_emitting_status_message_shows_it(self, qapp: object) -> None:
+        """The signal is connected, rather than emitted into the void."""
+        _app, overlay = build_application(["nodify-test"])
+        Application(_app, overlay, AppSettings())
+
+        overlay.status_message.emit("from the signal")
+
+        assert overlay.header.status.text() == "from the signal"
+        overlay.deleteLater()
+
+    def test_clearing_removes_the_message(self, qapp: object) -> None:
+        _app, overlay = build_application(["nodify-test"])
+        subject = Application(_app, overlay, AppSettings())
+
+        subject.report("a problem")
+        subject.report("")
+
+        assert overlay.header.status.text() == ""
+        overlay.deleteLater()

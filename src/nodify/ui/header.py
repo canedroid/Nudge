@@ -41,6 +41,17 @@ class OverlayHeader(QWidget):
         self.hotkey_chip.setToolTip("Global hotkey — toggles the overlay")
         layout.addWidget(self.hotkey_chip)
 
+        # Messages the user has to see, such as a hotkey that could not be
+        # registered or a folder that is not a vault. Given a place between the
+        # brand and the actions, because an error with nowhere to go looks
+        # identical to an application that silently did nothing.
+        self.status = QLabel("", self)
+        self.status.setObjectName("statusMessage")
+        self.status.setFont(fonts.body_font(10))
+        self.status.setStyleSheet(f"color: {colors.TEXT_DIM};")
+        self.status.setVisible(False)
+        layout.addWidget(self.status)
+
         layout.addStretch(1)
 
         self.settings_button = QPushButton("SETTINGS", self)
@@ -76,3 +87,13 @@ class OverlayHeader(QWidget):
     def set_hotkey(self, accelerator: str) -> None:
         """Show the currently registered global hotkey in the chip."""
         self.hotkey_chip.setText(accelerator)
+
+    def show_status(self, message: str) -> None:
+        """Show a message, or clear it when given nothing.
+
+        The overlay has nowhere else to put this, and a message the user cannot
+        see is the same as not reporting the problem at all.
+        """
+        text = str(message or "").strip()
+        self.status.setText(text)
+        self.status.setVisible(bool(text))
