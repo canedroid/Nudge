@@ -240,7 +240,8 @@ class Application:
         try:
             services = build_services(vault_path)
         except VaultNotSelectedError as exc:
-            self.report(f"That folder cannot be used as a vault: {exc}")
+            reason = f"That folder cannot be used as a vault.\n\n{exc}"
+            self.report(reason)
             return None
         return Dashboard(services, self.settings)
 
@@ -251,6 +252,20 @@ class Application:
         messages are collected and shown in the header's status area.
         """
         self.overlay.show_status(message)
+
+    def report_fatal(self, message: str) -> None:
+        """Explain why the application cannot start, then wait to be dismissed.
+
+        Without this the user picks a folder, the process exits, and nothing was
+        ever displayed: the message went to a status label on an overlay that is
+        never shown. A startup failure the user cannot see is indistinguishable
+        from the application crashing.
+        """
+        from PyQt6.QtWidgets import QMessageBox
+
+        box = QMessageBox(QMessageBox.Icon.Warning, APPLICATION, message, parent=self.overlay)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.exec()
 
     def start(self) -> bool:
         """Register the hotkey and put the tray in place. Returns whether the
@@ -341,7 +356,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     application.dashboard = application.build_dashboard(vault)
     if application.dashboard is None:
-        # The folder is not a usable vault. Already reported by build_dashboard.
+        # The folder is not a usable vault. Say so in a dialog and wait, because
+        # exiting silently would leave the user with an application that appeared
+        # and vanished for no visible reason.
+        application.report_fatal(
+            "Nodify needs a vault folder to work with.\n\n"
+            "The folder you chose is not a Nodify vault. A vault is a folder "
+            "marked with a .nodify-vault file, holding notes, todos and timer "
+            "directories.\n\n"
+            "Choose a different folder, or create a vault there first."
+        )
         return 0
     application.start()
     application.start_watching()

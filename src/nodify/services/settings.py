@@ -251,7 +251,14 @@ def load_settings(directory: Path | None = None) -> SettingsOutcome:
         return SettingsOutcome(settings=AppSettings(), used_defaults=True)
 
     try:
-        text = path.read_text(encoding="utf-8")
+        # utf-8-sig, not utf-8. Notepad on Windows writes a byte order mark by
+        # default, and so does PowerShell's ``Set-Content -Encoding utf8``. Plain
+        # utf-8 decoding leaves the mark in the text, ``json.loads`` rejects it,
+        # and the file is treated as malformed: the user hand-edits their settings,
+        # saves, and silently loses their vault, hotkey and layout. utf-8-sig
+        # strips a mark when there is one and is identical to utf-8 when there is
+        # not.
+        text = path.read_text(encoding="utf-8-sig")
     except OSError:
         return SettingsOutcome(settings=AppSettings(), used_defaults=True)
 

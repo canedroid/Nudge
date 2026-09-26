@@ -20,6 +20,7 @@ from nodify.services.settings import (
     save_settings,
     settings_from_dict,
     settings_path,
+    settings_to_dict,
 )
 
 
@@ -137,6 +138,37 @@ class TestRecovery:
         outcome = load_settings(config)
         assert outcome.settings == AppSettings()
         assert outcome.recovered_from is None
+
+    def test_a_byte_order_mark_does_not_discard_the_settings(self, config: Path) -> None:
+        """The bug a real run found, and Notepad makes it easy to hit.
+
+        Notepad on Windows writes a UTF-8 byte order mark by default, as does
+        PowerShell's ``Set-Content -Encoding utf8``. Decoding as plain utf-8
+        leaves the mark in the text, the JSON parser rejects it, and the file is
+        treated as malformed: the user hand-edits their settings, saves, and
+        silently loses their vault path, hotkey and layout.
+        """
+        payload = json.dumps(settings_to_dict(AppSettings(vault_path="C:/vault")))
+        # Written as bytes, because the mark is not really a character in the
+        # text and encoding it by hand is how it goes missing in a test.
+        path = settings_path(config)
+        path.write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
+
+        outcome = load_settings(config)
+
+        assert outcome.recovered_from is None, "a BOM was treated as corruption"
+        assert outcome.settings.vault_path == "C:/vault"
+
+    def test_settings_written_by_notepad_survive_a_reload(self, config: Path) -> None:
+        """Round trip through a BOM-prefixed file, as a hand-edit would produce."""
+        save_settings(AppSettings(hotkey="Ctrl+Shift+K", vault_path="C:/notes"), config)
+        path = settings_path(config)
+        path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())
+
+        reloaded = load_settings(config)
+
+        assert reloaded.settings.hotkey == "Ctrl+Shift+K"
+        assert reloaded.settings.vault_path == "C:/notes"
 
 
 class TestClamping:

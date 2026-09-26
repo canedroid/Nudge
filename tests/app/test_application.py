@@ -485,6 +485,43 @@ class TestStatusMessages:
         assert overlay.header.status.text() == ""
         overlay.deleteLater()
 
+    def test_a_fatal_message_explains_itself(self, qapp: object, monkeypatch) -> None:
+        """A startup failure the user cannot see looks like a crash.
+
+        Found by running the packaged build against a folder that is not a vault:
+        the process exited, and the reason had been written to a status label on
+        an overlay that was never shown.
+        """
+        shown: list[str] = []
+
+        class FakeBox:
+            class Icon:  # noqa: N801 - matching Qt's spelling
+                Warning = object()
+
+            class StandardButton:  # noqa: N801
+                Ok = object()
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                shown.append(str(args[2] if len(args) > 2 else ""))
+
+            def setStandardButtons(self, _buttons: object) -> None:  # noqa: N802
+                return None
+
+            def exec(self) -> int:
+                return 0
+
+        import PyQt6.QtWidgets as widgets
+
+        monkeypatch.setattr(widgets, "QMessageBox", FakeBox)
+        _app, overlay = build_application(["nodify-test"])
+        subject = Application(_app, overlay, AppSettings())
+
+        subject.report_fatal("that folder is not a vault")
+
+        assert shown, "no dialog was shown"
+        assert "not a vault" in shown[0]
+        overlay.deleteLater()
+
 
 class TestRealNativeServices:
     """The application must use the working registrar, not the stand-in.

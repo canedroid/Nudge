@@ -30,6 +30,27 @@ or
 .venv\Scripts\python -m nodify
 ```
 
+On the first run a folder picker asks for your vault, and the choice is
+remembered. If that folder later stops being a vault, you are asked again rather
+than started on a broken vault.
+
+## Create a vault
+
+Nodify **has no interface for creating a vault yet**, so an existing one is
+required before first run. To make an empty one:
+
+```bat
+.venv\Scripts\python -c "from pathlib import Path; from nodify.adapters.vault import create; print(create(Path(r'C:\path\to\your\vault')))"
+```
+
+This writes the `.nodify-vault` marker and the `notes/`, `todos/`, and `timer/`
+folders. It refuses to touch a non-empty folder, so pointing it at a directory of
+existing Markdown will not silently rearrange your files. Pick that folder in
+the prompt.
+
+An existing plain-Markdown folder can also be used by creating the empty
+`.nodify-vault` marker inside it by hand.
+
 ## Verify
 
 All four must pass before a change is committed.
@@ -60,19 +81,29 @@ the width:
 | 3 | To-Do | standard |
 | 4 | Files | standard |
 
-Drag a tile by the strip along its top edge and drop it on another tile to
-**swap their positions**, each keeping its own size. Tiles resize from the
-bottom-right grip, snap to an eight-pixel grid, and align with the edges of
-nearby tiles. A tile is always clamped inside the screen, so it can never be
-dragged somewhere it cannot be recovered from. The layout is remembered.
+The layout engine and each tile's drag strip and resize grip are implemented
+and unit tested, including eight-pixel snapping, edge alignment, and clamping a
+tile inside the screen so it can never be dragged somewhere it cannot be
+recovered from. **The frames are mounted, but their drag and resize signals are
+not yet connected to the layout, so tiles do not move yet and a drag is not
+remembered across restarts.** Until that is wired up, the four tiles sit at their
+computed starting positions.
 
 The area between and around the tiles is **click-through**, so the desktop
 underneath stays usable. This can be turned off, which makes the overlay capture
 every click.
 
-Toggle the overlay with the global hotkey (default `Ctrl+Space`), `Escape`, the
-Hide button, or the tray. Quitting is explicit. Closing the window hides the
-overlay rather than ending the process, and the hotkey is released on exit.
+Toggle the overlay with `Escape`, the Hide button, or the tray. Quitting is
+explicit. Closing the window hides the overlay rather than ending the process,
+and the hotkey is released on exit.
+
+The default accelerator is `Ctrl+Space` and it is registered, but **it is
+currently a Qt `QShortcut` parented to the `QApplication`, not a Win32
+`RegisterHotKey` hook.** It fires while Nodify owns focus, which is enough for
+the tests and the tray path but is *not* a true system-wide hotkey; it will not
+summon the overlay over another application. Making it genuinely global needs a
+Win32 registrar, and pressing the combination with Nodify in the background is
+the manual check that has not been done yet.
 
 A hotkey without a modifier is refused, and a rebind that the system rejects
 rolls back to the previous working combination rather than leaving the overlay
@@ -127,6 +158,15 @@ place, so an interrupted save cannot leave a truncated document.
 opacity, backdrop, click-through state and the tile layout. A malformed file is
 moved to `settings.recovered.json` and the application starts on defaults, rather
 than overwriting whatever you had configured or refusing to start.
+
+A UTF-8 byte-order mark is tolerated, because Notepad and PowerShell both write
+one by default on Windows. Treating that as corruption would discard a working
+configuration on a perfectly ordinary save, so a BOM-prefixed file is read
+normally and rewritten without it.
+
+If the remembered vault is no longer a valid vault, the app says so plainly and
+exits, rather than starting against the wrong folder and reporting confusing
+errors from every panel.
 
 Every value is clamped on read. A negative opacity, a zero tile width or a
 modifier-less hotkey are all reachable by hand-editing the file, and each would
