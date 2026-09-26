@@ -92,23 +92,56 @@ class TestGeometry:
 
 
 class TestLifecycle:
-    def test_escape_hides_rather_than_closes(self, overlay: Overlay) -> None:
+    def test_escape_asks_the_owner_to_hide_rather_than_hiding_itself(
+        self, overlay: Overlay
+    ) -> None:
+        """The overlay no longer decides what "hide" means.
+
+        It is not the only window on screen any more: the tiles are independent
+        top-level windows, because per-pixel blur within one window is not
+        something the compositor offers. Hiding only the overlay would leave four
+        tiles floating over the desktop with no header to close them, so the
+        request is passed up to whoever owns the tiles.
+        """
         overlay.show()
-        assert overlay.isVisible()
+        asked: list[bool] = []
+        overlay.hide_requested.connect(lambda: asked.append(True))
+
         overlay.keyPressEvent(
             QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
         )
-        assert not overlay.isVisible()
 
-    def test_close_hides_instead_of_ending_the_process(self, overlay: Overlay) -> None:
+        assert asked, "escape did not ask anyone to hide the dashboard"
+        assert overlay.isVisible(), "the overlay hid itself and left the tiles behind"
+
+    def test_close_asks_the_owner_to_hide_instead_of_ending_the_process(
+        self, overlay: Overlay
+    ) -> None:
         app = QApplication.instance()
         overlay.show()
+        asked: list[bool] = []
+        overlay.hide_requested.connect(lambda: asked.append(True))
+
         event = QCloseEvent()
         overlay.closeEvent(event)
-        assert not event.isAccepted()
-        assert not overlay.isVisible()
+
+        assert not event.isAccepted(), "closing must not end the process"
+        assert asked, "closing did not ask anyone to hide the dashboard"
         # The application must still be alive to be shown again.
         assert QApplication.instance() is app
+
+    def test_an_unrelated_key_is_left_alone(self, overlay: Overlay) -> None:
+        """Only Escape means "hide"; everything else belongs to the panels."""
+        overlay.show()
+        asked: list[bool] = []
+        overlay.hide_requested.connect(lambda: asked.append(True))
+
+        overlay.keyPressEvent(
+            QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
+        )
+
+        assert not asked
+        assert overlay.isVisible()
 
     def test_background_press_is_absorbed(self, overlay: Overlay) -> None:
         event = QMouseEvent(

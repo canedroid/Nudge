@@ -22,10 +22,17 @@ DANGER = "#e0e0e0"
 SUCCESS = "#9a9a9a"
 WARNING = "#c0c0c0"
 
+#: Alpha of the tint painted over the tiles, 0-255. This is the single place the
+#: glass opacity is decided: the stylesheet and the tile's own paint both read it,
+#: because two literals is how a tile ends up opaque in one code path and
+#: translucent in the other.
+#:
+#: 140 is a deliberate middle. Lower and white body text loses contrast against a
+#: bright window behind the overlay; higher and the desktop stops being visible
+#: through the tiles, which is the entire point of the effect.
+TILE_TINT_ALPHA = 140
+
 # --- Typography ---
 FONT_FAMILY = "Segoe UI"
 FONT_FAMILY_HEADER = "Bahnschrift"
 FONT_SCALE = 1.0  # global UI font scale (0.8 – 1.6); fonts helpers multiply by it
-
-# --- Window ---
-WINDOW_OPACITY = 0.75

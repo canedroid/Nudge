@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest something Nodify should do.
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Nodify keeps everything in a plain folder you own, so a request is much
+        easier to accept if it does not need a server.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: |
+        Describe the situation, not the solution. The situation is the part that
+        survives contact with a different design.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: Optional. Skipping this is fine, and often more useful.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you have tried instead
+      description: |
+        Including workarounds you are happy to live with. Sometimes the answer is
+        a better version of what already exists.
+    validations:
+      required: false

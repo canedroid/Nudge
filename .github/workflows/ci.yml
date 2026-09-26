@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Only ever a yes or a no: a newer push makes the older run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    # Windows, and not by preference. `nodify.ui.win_backdrop` raises on import
+    # anywhere else because the compositor APIs are Win32, so the suite genuinely
+    # cannot run on Linux or macOS. A green run on the wrong platform would be
+    # worth nothing.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Lint
+        run: python -m ruff check .
+
+      - name: Format
+        run: python -m ruff format --check .
+
+      - name: Types
+        run: python -m mypy src
+
+      - name: Tests
+        run: python -m pytest
+
+      - name: Live smoke
+        # Mounts the real dashboard, checks the tiles are on screen, reads the
+        # fill alpha off a real paint, drags, resizes, and confirms the result
+        # reached disk. It writes only to a temporary directory and never touches
+        # the runner's real config.
+        #
+        # This is the one gate that needs a desktop session, because it creates
+        # real windows. It has no assertions about what the compositor did, so a
+        # headless runner degrades to "the tiles mounted" rather than failing for
+        # reasons that have nothing to do with the change under test.
+        run: python -m nodify.smoke

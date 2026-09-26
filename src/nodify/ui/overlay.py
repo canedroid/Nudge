@@ -21,14 +21,12 @@ from PyQt6.QtGui import (
     QKeyEvent,
     QMouseEvent,
     QPainter,
-    QPen,
     QResizeEvent,
 )
 from PyQt6.QtWidgets import QWidget
 
 from nodify.styles.app_qss import GUTTER_ALPHA_BLOCK, GUTTER_ALPHA_PASS_THROUGH
 from nodify.ui.header import HEADER_HEIGHT, OverlayHeader
-from nodify.ui.kit import colors
 
 #: Margin between the screen edge and the tile area.
 GUTTER = 16
@@ -54,6 +52,12 @@ class Overlay(QWidget):
     #: tiles. The tile rectangles are absolute, so a resolution change would
     #: otherwise leave them outside the new bounds.
     resized = pyqtSignal()
+
+    #: Emitted instead of hiding the overlay, because the overlay is no longer the
+    #: only window on screen. The tiles are independent top-level windows, so
+    #: hiding just this one would leave four tiles floating over the desktop with
+    #: no way to reach them. Whoever owns the tiles has to hide them too.
+    hide_requested = pyqtSignal()
 
     def __init__(self, on_quit: Callable[[], None] | None = None) -> None:
         super().__init__(
@@ -135,19 +139,16 @@ class Overlay(QWidget):
         Painting a fully transparent rectangle is equivalent to not painting at
         all, so this is done explicitly to make the intent obvious and to keep a
         single place where the click-through behaviour is decided.
+
+        There is deliberately no outline around the tile area. The tiles are
+        separate top-level windows that float wherever the user put them, so a
+        rectangle drawn around the whole area would cut a line across them, and
+        because the overlay is always-on-top it would do so even when the tiles
+        are stacked above it. Each tile draws its own border instead.
         """
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), self._gutter_color())
-
-        # The tile area and its frame. These are chrome only; the tiles themselves
-        # are children added in a later phase.
-        area = self.tile_area()
-        if area.isEmpty():
-            return
-        painter.setPen(QPen(QColor(colors.PURPLE_GLOW), 1.0))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(area.adjusted(0, 0, -1, -1))
 
     # --------------------------------------------------------------- geometry
 
@@ -165,7 +166,7 @@ class Overlay(QWidget):
 
     def keyPressEvent(self, event: QKeyEvent | None) -> None:  # noqa: N802 (Qt naming)
         if event is not None and event.key() == Qt.Key.Key_Escape:
-            self.hide()
+            self.hide_requested.emit()
             return
         super().keyPressEvent(event)
 
@@ -179,10 +180,15 @@ class Overlay(QWidget):
         super().mousePressEvent(event)
 
     def closeEvent(self, event: QCloseEvent | None) -> None:  # noqa: N802 (Qt naming)
-        """Closing the window hides the overlay instead of quitting."""
+        """Closing the window hides the whole dashboard instead of quitting.
+
+        Routed through ``hide_requested`` for the same reason as Escape: the
+        overlay is no longer the only visible window, so it must not decide on its
+        own what "hide" means.
+        """
         if event is not None:
             event.ignore()
-        self.hide()
+        self.hide_requested.emit()
 
     def request_quit(self) -> None:
         """Actually end the process. Only the tray and the Quit button use this."""

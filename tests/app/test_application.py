@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import QPoint, QRect, Qt
+from PyQt6.QtTest import QTest
 
 from nodify.app.application import (
     Application,
@@ -232,8 +234,16 @@ class TestShowMountsTheDashboard:
         qapp.processEvents()
 
         assert subject.dashboard.is_mounted
+        overlay_origin = subject.overlay.mapToGlobal(QPoint(0, 0))
         for tile, frame in subject.dashboard.frames.items():
-            assert frame.parentWidget() is subject.overlay, f"{tile} is not in the overlay"
+            assert frame.isWindow(), f"{tile} is not its own window"
+            expected = subject.dashboard.geometry_for(tile)
+            assert frame.geometry() == QRect(
+                overlay_origin.x() + expected.x,
+                overlay_origin.y() + expected.y,
+                expected.width,
+                expected.height,
+            ), f"{tile} is not placed over the overlay"
 
     def test_the_panels_are_actually_visible_after_showing(
         self, subject: Application, qapp: object
@@ -269,6 +279,97 @@ class TestShowMountsTheDashboard:
         assert len(subject.dashboard.frames) == 4
         for tile, frame in subject.dashboard.frames.items():
             assert frame.isVisible(), f"{tile} disappeared after a toggle"
+
+    def test_hiding_takes_the_tiles_off_screen_too(
+        self, subject: Application, qapp: object
+    ) -> None:
+        """The bug the signal was added for.
+
+        The tiles became top-level windows so the compositor would blur them
+        individually. That made "hide the overlay" insufficient: the header
+        vanished but four tiles stayed on the desktop with no way to reach them,
+        and the only thing that could have noticed was a human.
+        """
+        subject.show()
+        qapp.processEvents()
+        assert all(frame.isVisible() for frame in subject.dashboard.frames.values())
+
+        subject.hide()
+        qapp.processEvents()
+
+        assert not subject.overlay.isVisible()
+        for tile, frame in subject.dashboard.frames.items():
+            assert not frame.isVisible(), f"{tile} was stranded on the desktop"
+
+    def test_escape_hides_the_tiles_and_the_overlay(
+        self, subject: Application, qapp: object
+    ) -> None:
+        subject.show()
+        qapp.processEvents()
+
+        QTest.keyClick(subject.overlay, Qt.Key.Key_Escape)
+        qapp.processEvents()
+
+        assert not subject.overlay.isVisible()
+        for tile, frame in subject.dashboard.frames.items():
+            assert not frame.isVisible(), f"escape stranded {tile}"
+
+    def test_the_header_hide_button_hides_the_tiles_and_the_overlay(
+        self, subject: Application, qapp: object
+    ) -> None:
+        subject.show()
+        qapp.processEvents()
+
+        subject.overlay.header.hide_button.click()
+        qapp.processEvents()
+
+        assert not subject.overlay.isVisible()
+        for tile, frame in subject.dashboard.frames.items():
+            assert not frame.isVisible(), f"the hide button stranded {tile}"
+
+    def test_closing_the_overlay_hides_the_tiles_and_the_overlay(
+        self, subject: Application, qapp: object
+    ) -> None:
+        subject.show()
+        qapp.processEvents()
+
+        subject.overlay.close()
+        qapp.processEvents()
+
+        assert not subject.overlay.isVisible()
+        for tile, frame in subject.dashboard.frames.items():
+            assert not frame.isVisible(), f"closing stranded {tile}"
+
+    def test_the_toggle_never_leaves_a_tile_behind(
+        self, subject: Application, qapp: object
+    ) -> None:
+        """The hotkey path, which is the one the user actually presses.
+
+        Pressed twice it must return to a clean desktop, not to a desktop with
+        half a dashboard on it.
+        """
+        for _ in range(3):
+            subject.toggle()
+            qapp.processEvents()
+            assert subject.is_visible()
+            assert all(frame.isVisible() for frame in subject.dashboard.frames.values())
+
+            subject.toggle()
+            qapp.processEvents()
+            assert not subject.is_visible()
+            for tile, frame in subject.dashboard.frames.items():
+                assert not frame.isVisible(), f"the hotkey stranded {tile}"
+
+    def test_hiding_a_dashboard_free_application_is_harmless(self, qapp: object) -> None:
+        """No vault means no tiles, and that path must not raise."""
+        _app, overlay = build_application(["nodify-test"])
+        subject = Application(_app, overlay, AppSettings())
+
+        subject.show()
+        subject.hide()
+        subject.toggle()
+        assert subject.is_visible()
+        overlay.deleteLater()
 
     def test_a_dashboard_free_application_still_shows(self, qapp: object) -> None:
         """No vault yet must not stop the overlay appearing."""

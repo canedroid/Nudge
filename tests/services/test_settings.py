@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from nodify.services.settings import (
+    DEFAULT_BACKDROP,
     MAX_OPACITY,
     MIN_OPACITY,
     AppSettings,
@@ -185,7 +186,26 @@ class TestClamping:
         assert settings_from_dict({"opacity": float("nan")}).opacity == 0.75
 
     def test_an_invalid_backdrop_falls_back(self) -> None:
-        assert settings_from_dict({"backdrop": "hologram"}).backdrop == "none"
+        """An unrecognised name gets the default, which is not a hardcoded guess.
+
+        The fallback is the constant rather than a literal so that changing the
+        default cannot leave this test asserting a value the code no longer
+        produces.
+        """
+        assert settings_from_dict({"backdrop": "hologram"}).backdrop == DEFAULT_BACKDROP
+
+    def test_a_fresh_install_is_glassy(self) -> None:
+        """Acrylic is what a first-time user gets, without touching the config.
+
+        Worth pinning: "the default" is the first impression of the product, and
+        it regressed once already by quietly staying at "none".
+        """
+        assert AppSettings().backdrop == "acrylic"
+        assert settings_from_dict({}).backdrop == "acrylic"
+
+    def test_a_deliberate_no_blur_is_respected(self) -> None:
+        """Upgrading must not override someone who turned the glass off."""
+        assert settings_from_dict({"backdrop": "none"}).backdrop == "none"
 
     def test_a_valid_backdrop_is_kept(self) -> None:
         assert settings_from_dict({"backdrop": "Mica"}).backdrop == "mica"

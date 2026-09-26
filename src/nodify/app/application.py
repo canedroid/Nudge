@@ -123,9 +123,12 @@ class Application:
 
     def _wire(self) -> None:
         self.overlay.header.settings_button.clicked.connect(self.open_settings)
-        self.overlay.header.hide_button.clicked.connect(self.overlay.hide)
+        self.overlay.header.hide_button.clicked.connect(self.overlay.hide_requested.emit)
         self.overlay.header.quit_button.clicked.connect(self.quit)
         self.overlay.resized.connect(self._on_overlay_resized)
+        # Escape and the window close button go through the same route as the
+        # header button, so no path can hide half the dashboard.
+        self.overlay.hide_requested.connect(self.hide)
         # A hotkey that fails, or a folder that is not a vault, has to be visible
         # somewhere or the user is left with an application that quietly did
         # nothing.
@@ -144,13 +147,25 @@ class Application:
     # ------------------------------------------------------------- behaviour
 
     def is_visible(self) -> bool:
+        """Whether anything at all is on screen.
+
+        The frames count as well as the overlay. Asking only about the overlay
+        would make the hotkey toggle think it had nothing to hide if a tile ever
+        outlived the overlay, which is exactly the state this class now prevents.
+        """
+        if self.dashboard is not None and self.dashboard.is_visible():
+            return True
         return self.overlay.isVisible()
 
     def show(self) -> None:
-        """Show the overlay over the screen under the cursor."""
+        """Show the overlay over the screen under the cursor, tiles included."""
         self.overlay.show_overlay()
         self.overlay.set_click_through(self.settings.click_through)
         self.mount_dashboard()
+        if self.dashboard is not None:
+            # Re-mounting a dashboard that is already mounted leaves the frames
+            # hidden, because they were hidden with the overlay; put them back.
+            self.dashboard.show_frames()
 
     def mount_dashboard(self) -> None:
         """Put the panels on screen, now that the overlay has a real size.
@@ -169,7 +184,15 @@ class Application:
         self.dashboard.start_watching()
 
     def hide(self) -> None:
+        """Take the whole dashboard off screen, tiles included.
+
+        The tiles are separate top-level windows, so hiding the overlay on its
+        own would strand them over the desktop. Every path that used to hide the
+        overlay directly now ends up here.
+        """
         self.overlay.hide()
+        if self.dashboard is not None:
+            self.dashboard.hide_frames()
 
     def toggle(self) -> None:
         """Show or hide. This is what the global hotkey calls."""

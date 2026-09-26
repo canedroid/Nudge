@@ -1,0 +1,70 @@
+name: Bug report
+description: Something in Nodify does not do what it says it does.
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing this. Nodify is Windows-only; if you are on another
+        platform this will not be actionable.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+      placeholder: |
+        Pressed Ctrl+Space, the overlay came up, but the notes tile was invisible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Numbered, starting from a fresh launch if possible.
+      placeholder: |
+        1. Launch Nodify
+        2. Press Ctrl+Space
+        3. Drag the notes tile to the left edge
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Nodify version
+      description: The About text, or the commit if you are running from source.
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and build
+      description: |
+        `winver` gives this. The build number matters: the compositor backdrop
+        APIs differ per build, and some of them silently do nothing.
+      placeholder: Windows 11 25H2, build 26200
+    validations:
+      required: true
+
+  - type: textarea
+    id: glass
+    attributes:
+      label: Backdrop effect
+      description: |
+        Which effect is in `settings.json` under `"backdrop"` — `none`, `blur`,
+        `acrylic`, or `mica`? If a tile looks flat instead of glassy, say which.
+      placeholder: acrylic
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: |
+        Errors, logs, or a screenshot. If the tiles are invisible, whether the
+        header and the click-through gutter still respond is genuinely useful.

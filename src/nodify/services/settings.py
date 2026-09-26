@@ -44,6 +44,12 @@ MAX_DIMENSION: Final = 20000
 
 VALID_BACKDROPS: Final = frozenset({"blur", "acrylic", "mica", "none"})
 
+# Acrylic is the default because it is the one mechanism confirmed to actually
+# blur on this build (see ``nodify.backdrop_probe``); mica is honoured where it
+# works and falls back otherwise. Anyone who deliberately chose "none" keeps it,
+# since an explicit value is respected over the default.
+DEFAULT_BACKDROP: Final = "acrylic"
+
 DEFAULT_HOTKEY: Final = default_accelerator()
 DEFAULT_VAULT_PATH: Final = ""
 
@@ -80,7 +86,7 @@ class AppSettings:
     """Everything the application remembers between runs."""
 
     hotkey: str = DEFAULT_HOTKEY
-    backdrop: str = "none"
+    backdrop: str = DEFAULT_BACKDROP
     opacity: float = 0.75
     click_through: bool = True
     vault_path: str = DEFAULT_VAULT_PATH
@@ -175,8 +181,8 @@ def _clean_opacity(value: Any) -> float:
 
 
 def _clean_backdrop(value: Any) -> str:
-    text = str(value or "none").strip().lower()
-    return text if text in VALID_BACKDROPS else "none"
+    text = str(value or DEFAULT_BACKDROP).strip().lower()
+    return text if text in VALID_BACKDROPS else DEFAULT_BACKDROP
 
 
 def _clean_hotkey(value: Any) -> str:

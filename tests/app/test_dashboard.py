@@ -8,12 +8,15 @@ including overdue state.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from PyQt6.QtCore import QPoint, QRect
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from nodify.adapters.vault import Vault, create
 from nodify.app.dashboard import (
@@ -23,8 +26,8 @@ from nodify.app.dashboard import (
     build_services,
 )
 from nodify.domain.clock import FixedClock
-from nodify.services.settings import AppSettings, TileGeometry
-from nodify.ui.layout.tile_layout import DEFAULT_ORDER, Rect, TileId
+from nodify.services.settings import AppSettings, TileGeometry, load_settings
+from nodify.ui.layout.tile_layout import DEFAULT_ORDER, SNAP_GRID, Rect, TileId
 from nodify.ui.tiles.tile_frame import TileFrame
 
 if TYPE_CHECKING:
@@ -457,15 +460,30 @@ class TestMounting:
         dashboard.shutdown()
         widget.deleteLater()
 
-    def test_mounting_gives_every_panel_a_frame_parented_to_the_host(
+    def test_mounting_gives_every_panel_its_own_top_level_frame(
         self, dashboard: Dashboard, host: QWidget
     ) -> None:
+        """Each panel gets a real window, positioned over the host.
+
+        The frames are top-level rather than children of the host because the
+        compositor can only blur behind a window. The geometry is what ties them
+        back to the host: it has to be the layout rectangle offset by the host's
+        position on the screen, or the tiles appear somewhere else entirely.
+        """
         frames = dashboard.mount(host, AREA)
+        origin = host.mapToGlobal(QPoint(0, 0))
 
         assert set(frames) == set(DEFAULT_ORDER)
         for tile, frame in frames.items():
-            assert frame.parentWidget() is host, f"{tile} is not in the window"
+            assert frame.isWindow(), f"{tile} is not its own window"
             assert frame.content is dashboard.panels()[tile]
+            expected = dashboard.geometry_for(tile)
+            assert frame.geometry() == QRect(
+                origin.x() + expected.x,
+                origin.y() + expected.y,
+                expected.width,
+                expected.height,
+            ), f"{tile} is not where the layout put it"
 
     def test_every_mounted_panel_is_visible_with_real_geometry(
         self, dashboard: Dashboard, host: QWidget, qapp: QApplication
@@ -505,26 +523,40 @@ class TestMounting:
         second = dashboard.mount(host, AREA)
 
         assert {id(f) for f in first.values()} == {id(f) for f in second.values()}
-        assert len(host.findChildren(TileFrame)) == len(DEFAULT_ORDER)
+        # Top-level windows are not children of anything, so the count of live
+        # top-level TileFrames is what must not grow.
+        live = [
+            widget
+            for widget in QApplication.topLevelWidgets()
+            if isinstance(widget, TileFrame) and widget.isWindow()
+        ]
+        assert len(live) == len(DEFAULT_ORDER)
 
     def test_remounting_releases_the_old_frames(
         self, dashboard: Dashboard, host: QWidget, qapp: QApplication
     ) -> None:
         """A fresh dashboard on a new window must not leave the old one behind."""
-        from PyQt6.QtWidgets import QWidget
-
         other = QWidget()
         other.setGeometry(0, 0, AREA.width, AREA.height)
         try:
-            dashboard.mount(host, AREA)
+            before = {id(f) for f in dashboard.mount(host, AREA).values()}
             dashboard.mount(other, AREA)
             qapp.processEvents()
 
-            for tile, frame in dashboard.frames.items():
-                assert frame.parentWidget() is other, f"{tile} stayed on the old window"
+            after = dashboard.frames
+            assert {id(f) for f in after.values()}.isdisjoint(before), "old frames reused"
+            origin = other.mapToGlobal(QPoint(0, 0))
+            for tile, frame in after.items():
+                expected = dashboard.geometry_for(tile)
+                assert frame.geometry() == QRect(
+                    origin.x() + expected.x,
+                    origin.y() + expected.y,
+                    expected.width,
+                    expected.height,
+                ), f"{tile} stayed at the old window's position"
         finally:
-            # The frames are children of ``other``, so deleting it would take the
-            # panels with it. Release them first.
+            # The frames are top-level windows, so they survive their host being
+            # deleted. Release them first or they linger on the desktop.
             dashboard.shutdown()
             other.deleteLater()
 
@@ -571,3 +603,157 @@ class TestMounting:
 
         assert not dashboard.is_mounted
         assert host.findChildren(TileFrame) == []
+
+
+class TestDragAndResizeWiring:
+    """The signals have to be connected, not merely emitted.
+
+    This is the regression guard for the feature that shipped broken: the layout
+    engine knew every rule, ``TileFrame`` computed correct geometry for every
+    drag, and the two were never joined, so dragging a tile did nothing at all.
+    A test that only exercised ``TileLayout`` in isolation would have kept
+    passing throughout, which is exactly what happened.
+    """
+
+    @pytest.fixture
+    def host(self, qapp: QApplication, dashboard: Dashboard) -> Iterator[QWidget]:
+        """A window to mount into, torn down in the only order that is safe.
+
+        The dashboard must release its frames *before* the window is destroyed.
+        The frames are top-level now, so they would survive their host, but the
+        panels inside them are still children of the frames and are destroyed
+        with them; releasing first keeps ``shutdown()`` off deleted objects.
+        """
+        widget = QWidget()
+        widget.setGeometry(0, 0, AREA.width, AREA.height)
+        try:
+            yield widget
+        finally:
+            dashboard.shutdown()
+            widget.deleteLater()
+
+    def test_dragging_a_frame_moves_it(self, dashboard: Dashboard, host: QWidget) -> None:
+        frames = dashboard.mount(host, AREA)
+        frame = frames[TileId.NOTES]
+        start = dashboard.geometry_for(TileId.NOTES)
+
+        frame.tile_moving.emit(TileId.NOTES, Rect(start.x + 64, start.y, 0, 0))
+
+        moved = dashboard.geometry_for(TileId.NOTES)
+        assert moved.x != start.x or moved.y != start.y, "the frame did not move"
+        origin = host.mapToGlobal(QPoint(0, 0))
+        assert frame.geometry() == QRect(
+            origin.x() + moved.x, origin.y() + moved.y, moved.width, moved.height
+        )
+
+    def test_a_drag_stays_inside_the_area(self, dashboard: Dashboard, host: QWidget) -> None:
+        """A tile must never be draggable somewhere it cannot be recovered from."""
+        frames = dashboard.mount(host, AREA)
+
+        frames[TileId.FILES].tile_moving.emit(
+            TileId.FILES, Rect(AREA.width + 5000, AREA.height + 5000, 0, 0)
+        )
+
+        rect = dashboard.geometry_for(TileId.FILES)
+        assert rect.right <= AREA.width
+        assert rect.bottom <= AREA.height
+
+    def test_a_resize_is_told_apart_from_a_move(self, dashboard: Dashboard, host: QWidget) -> None:
+        """A zero-area proposal moves; a real one resizes. Both must work."""
+        frames = dashboard.mount(host, AREA)
+        frame = frames[TileId.TODOS]
+        before = dashboard.geometry_for(TileId.TODOS)
+
+        frame.tile_moving.emit(TileId.TODOS, Rect(before.x, before.y, 0, 0))
+        after_move = dashboard.geometry_for(TileId.TODOS)
+        assert after_move.width == before.width, "a move changed the size"
+
+        frame.tile_moving.emit(
+            TileId.TODOS, Rect(before.x, before.y, before.width + 120, before.height)
+        )
+        after_resize = dashboard.geometry_for(TileId.TODOS)
+        assert after_resize.width > before.width, "a resize did not resize"
+
+    def test_a_resize_is_snapped_to_the_grid(self, dashboard: Dashboard, host: QWidget) -> None:
+        frames = dashboard.mount(host, AREA)
+        before = dashboard.geometry_for(TileId.TIMERS)
+
+        frames[TileId.TIMERS].tile_moving.emit(
+            TileId.TIMERS, Rect(0, 0, before.width + 37, before.height + 11)
+        )
+
+        after = dashboard.geometry_for(TileId.TIMERS)
+        assert after.width % SNAP_GRID == 0
+        assert after.height % SNAP_GRID == 0
+
+    def test_dropping_a_tile_onto_another_swaps_them(
+        self, dashboard: Dashboard, host: QWidget
+    ) -> None:
+        """The headline behaviour: two tiles trade places, keeping their sizes."""
+        frames = dashboard.mount(host, AREA)
+        files = dashboard.geometry_for(TileId.FILES)
+        timers = dashboard.geometry_for(TileId.TIMERS)
+
+        frames[TileId.FILES].tile_dropped.emit(TileId.FILES, files)
+
+        # Dropping a tile where it already is must be harmless.
+        assert dashboard.geometry_for(TileId.FILES) == files
+        assert dashboard.geometry_for(TileId.TIMERS) == timers
+
+    def test_a_drop_is_persisted_and_survives_a_reload(
+        self, dashboard: Dashboard, host: QWidget
+    ) -> None:
+        """A finished gesture is written once, and a later load restores it.
+
+        Persisting is the difference between an arrangement and a decoration. It
+        is also written on drop rather than on every move, so one drag is one
+        write instead of sixty.
+        """
+        frames = dashboard.mount(host, AREA)
+        frame = frames[TileId.NOTES]
+
+        # Resized first, because a default tile is full height and the layout
+        # refuses to place a full-height tile part-way down the screen: doing so
+        # would push its bottom edge off the area, so the move is clamped back to
+        # the top and the drop would appear not to have been saved.
+        frame.tile_moving.emit(TileId.NOTES, Rect(0, 0, 304, 496))
+        frame.tile_dropped.emit(TileId.NOTES, Rect(240, 120, 304, 496))
+
+        stored = load_settings(Path(os.environ["NODIFY_CONFIG_DIR"]))
+        rectangles = [Rect(t.x, t.y, t.width, t.height) for t in stored.settings.layout]
+        assert Rect(240, 120, 304, 496) in rectangles, f"the drop was not saved: {rectangles}"
+
+    def test_moving_does_not_persist_on_every_step(
+        self, dashboard: Dashboard, host: QWidget
+    ) -> None:
+        """Only the drop writes, so a drag cannot hammer the config file."""
+        config = Path(os.environ["NODIFY_CONFIG_DIR"]) / "settings.json"
+        frames = dashboard.mount(host, AREA)
+        baseline = config.stat().st_mtime_ns if config.exists() else None
+
+        for offset in range(1, 6):
+            frames[TileId.NOTES].tile_moving.emit(TileId.NOTES, Rect(offset * 8, offset * 8, 0, 0))
+
+        if baseline is None:
+            assert not config.exists(), "moving wrote settings before any drop"
+        else:
+            assert config.stat().st_mtime_ns == baseline
+
+    def test_the_dragged_tile_keeps_its_own_size(self, dashboard: Dashboard, host: QWidget) -> None:
+        """A swap trades positions, not dimensions.
+
+        The timers column is deliberately the narrowest, so a swap that resized
+        it to match the notes tile would undo the whole weighting.
+        """
+        frames = dashboard.mount(host, AREA)
+        before = {tile: dashboard.geometry_for(tile) for tile in DEFAULT_ORDER}
+
+        frames[TileId.TIMERS].tile_dropped.emit(
+            TileId.TIMERS, before[TileId.NOTES].translated(1, 0)
+        )
+
+        for tile, rect in before.items():
+            now = dashboard.geometry_for(tile)
+            assert (now.width, now.height) == (rect.width, rect.height), (
+                f"{tile} changed size during a swap"
+            )

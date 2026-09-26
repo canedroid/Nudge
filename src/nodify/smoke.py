@@ -23,7 +23,7 @@ def main() -> int:
     from nodify.app.dashboard import Dashboard, Services
     from nodify.domain.clock import FixedClock
     from nodify.services.hotkey import HotkeyService, RecordingRegistrar
-    from nodify.services.settings import AppSettings
+    from nodify.services.settings import AppSettings, load_settings
     from nodify.ui.layout.tile_layout import Rect
 
     configure_surface_format()
@@ -91,6 +91,56 @@ def main() -> int:
 
     if visible != len(area):
         raise SystemExit(f"only {visible} of {len(area)} tiles are actually on screen")
+
+    # The glass. An opaque tile is invisible to this check and obvious to a user,
+    # so the fill's alpha is read back off a real paint rather than assumed from
+    # the constant that is supposed to produce it.
+    from nodify.ui.kit import colors
+
+    print("\nglass:")
+    sample = next(iter(area.values()))
+    painted = sample.grab().toImage().pixelColor(sample.width() // 2, sample.height() // 2)
+    print(f"  tile fill alpha: {painted.alpha()} (expected {colors.TILE_TINT_ALPHA})")
+    if painted.alpha() != colors.TILE_TINT_ALPHA:
+        raise SystemExit(
+            f"the tile fill is alpha {painted.alpha()}, so it hides the blur behind it"
+        )
+    mechanisms = {frame.backdrop_mechanism for frame in area.values()}
+    print(f"  compositor mechanism: {sorted(str(m) for m in mechanisms)}")
+    if None in mechanisms:
+        print("  note: no mechanism was accepted, so the tiles are a flat tint here")
+
+    # The drag. Dragging shipped doing nothing at all, so the gesture is performed
+    # here against the real mounted frames and the result is checked on disk.
+    print("\ndrag:")
+    notes = area[dashboard.layout_state().order[1]]
+    before = dashboard.geometry_for(notes.tile)
+    notes.tile_moving.emit(notes.tile, Rect(before.x - 48, before.y, 0, 0))
+    app.processEvents()
+    moved = dashboard.geometry_for(notes.tile)
+    print(f"  {notes.tile.value}: x {before.x} -> {moved.x}")
+    if moved.x == before.x:
+        raise SystemExit("dragging a tile did not move it")
+
+    notes.tile_moving.emit(notes.tile, Rect(moved.x, moved.y, moved.width // 2, moved.height))
+    app.processEvents()
+    shrunk = dashboard.geometry_for(notes.tile)
+    print(f"  {notes.tile.value}: width {moved.width} -> {shrunk.width}")
+    if shrunk.width >= moved.width:
+        raise SystemExit("resizing a tile did not resize it")
+
+    # Releasing the button is what saves, not dragging. Anything else would write
+    # the config file sixty times a second.
+    notes.tile_dropped.emit(notes.tile, shrunk)
+    app.processEvents()
+
+    saved = load_settings(Path(os.environ["NODIFY_CONFIG_DIR"])).settings.layout
+    print(f"  persisted rectangles: {[(t.x, t.y, t.width, t.height) for t in saved]}")
+    if not any(
+        (t.x, t.y, t.width, t.height) == (shrunk.x, shrunk.y, shrunk.width, shrunk.height)
+        for t in saved
+    ):
+        raise SystemExit("the new arrangement was not written to settings")
 
     # A real mutation, to prove the panels are wired to the vault and not stubs.
     note = services.notes.create("Smoke note", "Smoke", "written by the smoke test\n")

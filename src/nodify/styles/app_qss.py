@@ -11,6 +11,18 @@ from __future__ import annotations
 
 from nodify.ui.kit import colors
 
+
+def _rgb(hex_value: str) -> str:
+    """``"#0e0e0e"`` as ``"14, 14, 14"``, for building an rgba string.
+
+    Qt's stylesheet parser wants a CSS ``rgba()``. Composing it from the palette
+    means the tint and the base colour cannot drift apart, and lets one alpha
+    constant govern every translucent surface.
+    """
+    value = hex_value.lstrip("#")
+    return ", ".join(str(int(value[i : i + 2], 16)) for i in (0, 2, 4))
+
+
 # The click-through gutter is painted at this alpha when clicks should fall through
 # to whatever is beneath the overlay. Zero is fully transparent, and a layered
 # window is hit-tested by its alpha, so the platform passes the click down.
@@ -70,13 +82,17 @@ def header_qss() -> str:
 def tile_qss() -> str:
     """Shared stylesheet for a feature tile.
 
-    Tiles are dark translucent cards on a transparent overlay, so every colour
-    here is an rgba over whatever is behind. Opaque colours would punch a hole in
-    the glass effect the overlay is built around.
+    Tiles are dark translucent cards over a blurred desktop, so every colour here
+    is an rgba over whatever is behind. Opaque colours would punch a hole in the
+    glass effect the overlay is built around, which is why the tint takes its
+    alpha from :data:`colors.TILE_TINT_ALPHA` rather than being written as a
+    six-digit hex: ``#0e0e0e`` reads as "the tile colour" and silently becomes
+    fully opaque the moment someone pastes it here.
     """
+    tint = f"rgba({_rgb(colors.BG_GLASS)}, {colors.TILE_TINT_ALPHA})"
     return f"""
     QWidget#tile {{
-        background: {colors.BG_GLASS};
+        background: {tint};
         border: 1px solid rgba(230, 230, 230, 70);
         border-radius: 12px;
     }}
@@ -144,8 +160,7 @@ def notes_qss() -> str:
         border-color: {colors.PURPLE_GLOW};
     }}
     QPushButton#primary {{
-        color: {colors.BG_GLASS};
-        background: {colors.PURPLE_GLOW};
+        color: {colors.BG_GLASS};        background: {colors.PURPLE_GLOW};
         border: 1px solid {colors.PURPLE_GLOW};
         border-radius: 6px;
         padding: 5px 12px;

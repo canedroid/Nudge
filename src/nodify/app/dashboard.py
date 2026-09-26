@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from PyQt6.QtCore import QPoint
 from PyQt6.QtWidgets import QWidget
 
 from nodify.adapters.category_repo import FileSystemCategoryRepository
@@ -35,7 +36,12 @@ from nodify.services.notifications import (
 )
 from nodify.services.phone_bridge import PhoneBridgeService
 from nodify.services.platform import CoalescingWatcher, VaultChange
-from nodify.services.settings import AppSettings, TileGeometry, save_settings
+from nodify.services.settings import (
+    VALID_BACKDROPS,
+    AppSettings,
+    TileGeometry,
+    save_settings,
+)
 from nodify.ui.layout.tile_layout import (
     DEFAULT_ORDER,
     LayoutState,
@@ -48,6 +54,7 @@ from nodify.ui.tiles.notes_panel import NotesPanel
 from nodify.ui.tiles.tasks_panel import TasksPanel
 from nodify.ui.tiles.tile_frame import TileFrame
 from nodify.ui.tiles.timers_panel import TimersPanel
+from nodify.ui.win_backdrop import Backdrop
 
 
 class VaultNotSelectedError(Exception):
@@ -102,6 +109,10 @@ class Dashboard:
         self._bridge = PhoneBridgeService(now=services.clock.now)
         self._layout = TileLayout(LayoutState())
         #: The mounted tile frames, empty until :meth:`mount` is called.
+        #: The tile being dragged or resized right now, or ``None``. Held so a
+        #: second gesture can be recognised as a continuation rather than a new
+        #: arrangement.
+        self._dragging: TileId | None = None
         self._frames: dict[TileId, TileFrame] = {}
         #: The widget the frames are parented to, so a remount can be detected.
         self._mounted_to: QWidget | None = None
@@ -220,11 +231,17 @@ class Dashboard:
     # ------------------------------------------------------------- mounting
 
     def mount(self, parent: QWidget, area: Rect, *, gap: int = 16) -> dict[TileId, TileFrame]:
-        """Host every panel in a draggable frame inside ``parent``.
+        """Host every panel in a draggable top-level frame over ``parent``.
 
-        This is what makes the panels visible. Until a panel is a child of a real
-        widget with a real geometry, it exists but is never painted, which is the
+        This is what makes the panels visible. Until a panel is inside a real
+        window with a real geometry, it exists but is never painted, which is the
         difference between "the tests pass" and "there is an application".
+
+        The frames are separate top-level windows rather than children of
+        ``parent``, because the compositor can only blur behind a window and the
+        tiles need to be glass. ``parent`` is still needed: it owns the header and
+        the click-through gutter, and its top-left is the origin the layout's
+        overlay-relative rectangles are measured from.
 
         Idempotent: showing the overlay repeatedly re-uses the frames rather than
         stacking a second set on top of the first.
@@ -234,19 +251,114 @@ class Dashboard:
             return self._frames
 
         self.restore_layout(area, gap=gap)
+        origin = parent.mapToGlobal(QPoint(0, 0))
+        backdrop = self._backdrop()
+
         frames: dict[TileId, TileFrame] = {}
         for tile in DEFAULT_ORDER:
-            frame = TileFrame(tile, self.panels()[tile], parent)
-            frame.apply_rect(self.geometry_for(tile))
-            # Parenting does not show a child. Qt only shows widgets that existed
-            # when their parent was shown, so a frame created into an already
-            # visible window stays hidden until it is told otherwise.
+            frame = TileFrame(tile, self.panels()[tile], backdrop)
+            frame.apply_rect(self.geometry_for(tile), origin)
+            self._connect_frame(frame)
+            # Parenting does not show a child, and a top-level window is not shown
+            # by construction either. Qt only shows widgets that existed when their
+            # parent was shown, and a window created into an already visible
+            # desktop stays hidden until it is told otherwise.
             frame.show()
             frames[tile] = frame
         self._frames = frames
         self._mounted_to = parent
         self._stopped = False
+        self._raise_frames()
         return frames
+
+    def _backdrop(self) -> Backdrop:
+        """The compositor effect the tiles should ask for.
+
+        ``AppSettings`` already clamps the stored value to the valid set, so the
+        membership test here is belt and braces for a settings object built by
+        hand in a test. Falling back to acrylic rather than to nothing is
+        deliberate: a wrong value should still look like glass.
+        """
+        stored = self._settings.backdrop
+        if stored in VALID_BACKDROPS:
+            return Backdrop(stored)
+        return Backdrop.ACRYLIC
+
+    def _connect_frame(self, frame: TileFrame) -> None:
+        """Wire one frame's drag and resize signals to the layout.
+
+        This is the whole of "the tiles can be moved": :class:`TileFrame` has
+        always computed the geometry and :class:`TileLayout` has always known what
+        to do with it, but nothing joined the two, so every drag ended in a
+        signal nobody received.
+        """
+        frame.tile_moving.connect(self._on_tile_moving)
+        frame.tile_dropped.connect(self._on_tile_dropped)
+        frame.drag_started.connect(self._on_drag_started)
+        frame.drag_finished.connect(self._on_drag_finished)
+
+    def _on_tile_moving(self, tile: TileId, rect: Rect) -> None:
+        """Follow the pointer during a drag or resize.
+
+        A zero-area rectangle means a move and a real one means a resize, which
+        is how :meth:`TileFrame._perform_drag` and :meth:`TileFrame._perform_resize`
+        already differ. Using that rather than a new signal keeps the two paths
+        distinguishable without widening the signal signatures.
+        """
+        if rect.width or rect.height:
+            self._layout.resize_tile(tile, rect)
+        else:
+            self._layout.move_tile(tile, rect)
+        self._apply_frame(tile)
+
+    def _on_tile_dropped(self, tile: TileId, rect: Rect) -> None:
+        """Commit a finished drag, swapping if it landed on another tile.
+
+        The swap happens here rather than on every move so the tiles visibly
+        travel with the pointer and only trade places on release, and so a
+        dropped arrangement is written to settings exactly once per gesture
+        instead of sixty times a second.
+        """
+        self._layout.drop_tile(tile, rect)
+        # A swap moves two tiles, so every frame is re-applied rather than the
+        # one being dragged.
+        self._apply_all_frames()
+        self._persist_layout()
+
+    def _on_drag_started(self, tile: TileId) -> None:
+        self._dragging = tile
+
+    def _on_drag_finished(self, tile: TileId) -> None:
+        self._dragging = None
+
+    def _apply_frame(self, tile: TileId) -> None:
+        frame = self._frames.get(tile)
+        if frame is not None:
+            frame.apply_rect(self.geometry_for(tile), self._origin())
+
+    def _apply_all_frames(self) -> None:
+        for tile in self._frames:
+            self._apply_frame(tile)
+
+    def _origin(self) -> QPoint:
+        """The mounted overlay's top-left in global coordinates."""
+        if self._mounted_to is None:
+            return QPoint(0, 0)
+        return self._mounted_to.mapToGlobal(QPoint(0, 0))
+
+    def _raise_frames(self) -> None:
+        """Put the tiles above the overlay.
+
+        Both the overlay and the tiles are always-on-top, so their order within
+        that band is decided by activation, not by declaration. A tile that ends
+        up underneath would still be visible through the overlay's transparent
+        gutter but would not receive a click, which looks like a dead spot rather
+        than a stacking bug.
+        """
+        for frame in self._frames.values():
+            frame.raise_()
+        if self._mounted_to is not None:
+            self._mounted_to.lower()
 
     def relayout(self, area: Rect, *, gap: int = 16) -> None:
         """Re-clamp and re-apply the frames after the area changed size.
@@ -258,8 +370,8 @@ class Dashboard:
         if not self._frames:
             return
         self.restore_layout(area, gap=gap)
-        for tile, frame in self._frames.items():
-            frame.apply_rect(self.geometry_for(tile))
+        self._apply_all_frames()
+        self._raise_frames()
 
     @property
     def frames(self) -> dict[TileId, TileFrame]:
@@ -269,6 +381,37 @@ class Dashboard:
     @property
     def is_mounted(self) -> bool:
         return bool(self._frames)
+
+    def is_visible(self) -> bool:
+        """Whether any tile is actually on screen.
+
+        ``is_mounted`` is not the same question: frames stay mounted (and keep
+        their arrangement) while hidden, so the hotkey toggle has to ask whether
+        anything is showing.
+        """
+        return any(frame.isVisible() for frame in self._frames.values())
+
+    def show_frames(self) -> None:
+        """Put every tile back on screen, above the overlay that hosts it."""
+        if not self._frames:
+            return
+        for frame in self._frames.values():
+            frame.show()
+        self.raise_frames()
+
+    def hide_frames(self) -> None:
+        """Take every tile off screen.
+
+        The tiles are top-level windows now, so hiding the overlay alone is not
+        hiding the dashboard: it would leave four tiles stranded over whatever
+        the user switched to, with no header to close them.
+        """
+        for frame in self._frames.values():
+            frame.hide()
+
+    def raise_frames(self) -> None:
+        for frame in self._frames.values():
+            frame.raise_()
 
     def layout_state(self) -> LayoutState:
         return self._layout.state
